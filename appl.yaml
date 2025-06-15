@@ -1,0 +1,57 @@
+# https://appl-team.github.io/appl/setup/#default-configs
+
+settings:
+  logging:
+    display:
+      llm_response: false
+      llm_cost: false
+      tool_calls: false
+      tool_results: false     
+
+  caching:
+    folder: "/ssddata/wushw/.appl/caches"
+
+  # tracing:
+  #   enabled: true
+
+default_servers:
+  default: llama
+
+servers:
+  llama:
+    model: meta-llama/Llama-3.3-70B-Instruct
+    provider: custom
+    base_url: http://localhost:1118/v1
+    api_key: "llama"
+    max_tokens: 1024
+    temperature: 0.1
+  llama-t0:
+    template: llama
+    temperature: 0.0
+  llama-api:
+    model: meta-llama/Llama-3.3-70B-Instruct
+    provider: custom
+    base_url: https://api.siliconflow.cn/v1
+    api_key: os.environ/LLAMA_API_KEY
+    max_tokens: 1024
+  deepseek-api:
+    template: llama-api
+    model: deepseek-ai/DeepSeek-R1
+  deepseek:
+    template: llama
+    model: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+    api_key: deepseek-ai
+  qwen:
+    model: Qwen/Qwen2.5-72B-Instruct
+    provider: custom
+    base_url: http://localhost:1116/v1
+    api_key: "qwen-72b"
+    max_tokens: 1024
+    temperature: 0.0
+  qwen3:
+    model: Qwen/Qwen3-32B
+    provider: custom
+    base_url: http://localhost:1132/v1
+    api_key: "qwen32"
+    max_tokens: 1024
+    temperature: 0.0

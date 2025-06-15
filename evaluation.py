@@ -1,0 +1,96 @@
+import os
+from load_data import load_data
+import numpy as np
+import json
+import sys
+import time
+
+
+def print_case(corpus, query, pred, gt, rec):
+    print(f"Query: {query}")
+    print(f"Recall: {rec * 100:.2f}%")
+    if type(gt[0]) == int:
+        gt = [corpus[i] for i in gt]
+    if type(pred[0]) == int:
+        pred = [corpus[i] for i in pred]
+    for p in pred:
+        if p in gt:
+            label = 1
+        else:
+            label = 0
+        print(f"[Label] {label} | [Prediction] {p}")
+    print("-" * 50)
+
+
+if __name__ == "__main__":
+    dataset_name = sys.argv[1]
+    result_dir = sys.argv[2] if len(sys.argv) > 2 else "results"
+    method = sys.argv[3] if len(sys.argv) > 3 else "llm"
+    df, query_answer, query_template, filename = load_data(dataset_name)
+    result_data = json.load(open(f"{result_dir}/{method}/{dataset_name}.json", "r"))
+    # result_data = {d["query"]: d["pred"] for d in result_data}
+    # gt_data = json.load(open(f"{result_dir}/{method}/{dataset_name}_refined.json", "r"))
+    # gt_data = {d["query"]: d["answers"] for d in gt_data}
+
+    if dataset_name == "paper":
+        corpus = df["abstracts"].values.tolist()
+        batch_size = 1024
+    elif dataset_name == "product":
+        corpus = df["Product_Title"].values.tolist()
+        batch_size = 512
+    else:
+        cols = df.columns
+        corpus = df[cols[0]].values.tolist()
+        batch_size = 128
+
+    pre_list, rec_list, f1_list = [], [], []
+    k_list = []
+    time_list = []
+    retrieve_recall_list = []
+    # for d in gt_data:
+    for d in result_data:
+        query = d["query"]
+        # gt = d["answers"]
+        gt = query_answer.get(query, [])
+        # gt = gt_data.get(query, [])
+        # pred = result_data[query]
+        pred = d["pred"]
+        time_list.append(d.get("time", 0))
+        retrieved = d.get("retrieved", pred)
+        if len(gt) == 0:
+            continue
+        k = len(retrieved)
+        k_list.append(k)
+        if len(pred) == 0:
+            precision, recall, f1 = 0, 0, 0
+        else:
+            if type(gt[0]) == str and type(pred[0]) == int:
+                pred = [corpus[i] for i in pred]
+                retrieved = [corpus[i] for i in retrieved]
+            elif type(gt[0]) == int and type(pred[0]) == str:
+                gt = [corpus[i] for i in gt]
+            # calculate precision, recall, f1
+            retrieve_recall = len(set(retrieved) & set(gt)) / len(gt)
+            retrieve_recall_list.append(retrieve_recall)
+            tp = len(set(pred) & set(gt))
+            precision = tp / len(pred)
+            recall = tp / len(gt)
+            f1 = 2 * precision * recall / max(precision + recall, 1e-6)
+        if recall < 0.5:
+            print(f"Query: {query}")
+            print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
+            print(f"Pred: {pred}")
+            print(f"GT: {gt}")
+            print("==========================")
+        pre_list.append(precision)
+        rec_list.append(recall)
+        f1_list.append(f1)
+    avg_pre = np.mean(pre_list) * 100
+    avg_rec = np.mean(rec_list) * 100
+    avg_f1 = 2 * avg_pre * avg_rec / max(avg_pre + avg_rec, 1e-6)
+    print(f"pre: {avg_pre:.2f}")
+    print(f"rec: {avg_rec:.2f}")
+    print(f"f1: {avg_f1:.2f}")
+    print(f"Average_k: {np.mean(k_list)}")
+    print(f"Average_retrieve_recall: {np.mean(retrieve_recall_list) * 100:.2f}")
+    print(f"Average_time: {np.mean(time_list)}")
