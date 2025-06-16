@@ -28,6 +28,7 @@ def process_single_prompt(cond: str, col: str, val: str) -> str:
 def llm_check(query: str, corpus: list, template: str, checked_results={}) -> list:
     prompts = []
     corpus_new = []
+    corpus = list(set(corpus))
     for value in corpus:
         if value in checked_results:
             continue

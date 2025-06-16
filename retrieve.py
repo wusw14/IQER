@@ -48,7 +48,9 @@ def retrieve_corpus(
     bm25_results = [corpus[i] for i in bm25_results]
     # normalize bm25 scores
     bm25_scores = np.array(bm25_scores)
-    bm25_scores = (bm25_scores - bm25_scores[-1]) / (bm25_scores[0] - bm25_scores[-1])
+    bm25_scores = (bm25_scores - bm25_scores[-1]) / (
+        bm25_scores[0] - bm25_scores[-1] + 1e-6
+    )
     hnsw_results, hnsw_scores, query_embs, unique_results, results_embs = (
         hnsw_index.search(query_list, args.k)
     )
@@ -69,7 +71,9 @@ def retrieve_corpus(
     hnsw_results = [corpus[i] for i in hnsw_results]
     # normalize hnsw scores
     hnsw_scores = np.array(hnsw_scores)
-    hnsw_scores = (hnsw_scores - hnsw_scores[-1]) / (hnsw_scores[0] - hnsw_scores[-1])
+    hnsw_scores = (hnsw_scores - hnsw_scores[-1]) / (
+        hnsw_scores[0] - hnsw_scores[-1] + 1e-6
+    )
     return bm25_results, bm25_scores, hnsw_results, hnsw_scores
 
 

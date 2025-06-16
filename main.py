@@ -8,7 +8,7 @@ from reformulate import reformulate, score_query
 from retrieve import retrieve_corpus
 import numpy as np
 from collections import defaultdict
-from constants import ALPHA_DIFF, NEW_POS_RATIO
+from constants import ALPHA_DIFF, NEW_POS_RATIO, ALPHA
 from llm_check import llm_check
 
 
@@ -83,6 +83,16 @@ def combine_index(
     return sorted_objs
 
 
+def get_sample_values(checked_obj_dict: dict[str, int]) -> list[str]:
+    """
+    Get the sample values based on the checked objects
+    """
+    pos_objs = [k for k, v in checked_obj_dict.items() if v == 1]
+    neg_objs = [k for k, v in checked_obj_dict.items() if v == 0]
+    samples = pos_objs + neg_objs[: len(pos_objs)]
+    return samples
+
+
 def solve_query(
     query: str,
     attribute: str,
@@ -94,39 +104,43 @@ def solve_query(
     answers: list,
 ) -> dict:
     answers = [a.lower() for a in answers]
-    # Step 1: load sample values, which are pre-selected
-    table = args.dataset
-    col_vals = json.load(open(f"{path}/{table}_sample_values.json"))
-    # Step 2: Initialization
+    # Step 1: Initialization
     reformulate_time, refine_time, retrieve_time = 0, 0, 0
-    alpha = 0.5  # the weight of the BM25 index
+    alpha = ALPHA  # the weight of the BM25 index
     pos_objs = []  # the positive objects
     checked_obj_dict = {}
     query_scores = {query: 2}
     last_iter_pos_objs = []
+    generated_query_list = []
     print(f"======Processing Query: [{query}]=======")
+    # Step 2: Iteratively refine the query and retrieve the cell values
     for step in range(args.steps):
         cur_iter_pos_objs = []
         print(f"======Step {step}=======")
         # Reformulate the query
         start_time = time.time()
-        if len(pos_objs) == 0:
-            sample_values = col_vals[attribute]
+        if step > 0:
+            sample_values = get_sample_values(checked_obj_dict)
+            cur_generated_query_list = reformulate(
+                reformat_template.format(query=query),
+                attribute,
+                sample_values,
+                generated_query_list,
+            )
+            generated_query_list.extend(cur_generated_query_list)
         else:
-            sample_values = pos_objs
-        generated_query_list = reformulate(
-            reformat_template.format(query=query), attribute, sample_values
-        )
-        print(f"Reformulated query: {generated_query_list}")
+            cur_generated_query_list = []
+        print(f"Reformulated query: {cur_generated_query_list}")
         reformulate_time += time.time() - start_time
 
         # score the query words in the query list
         start_time = time.time()
-        new_query_objs = generated_query_list + last_iter_pos_objs
-        query_scores_new = score_query(
-            reformat_template.format(query=query), new_query_objs
-        )
-        query_scores.update(query_scores_new)
+        new_query_objs = cur_generated_query_list + last_iter_pos_objs
+        if len(new_query_objs) > 0:
+            query_scores_new = score_query(
+                reformat_template.format(query=query), new_query_objs
+            )
+            query_scores.update(query_scores_new)
         refine_time += time.time() - start_time
 
         # retrieve the corpus based on the query list
@@ -141,15 +155,15 @@ def solve_query(
         retrieve_time += time.time() - start_time
 
         # iteratively examine the retrieved objs
-        alpha_diff = 1
+        bm25_score, hnsw_score = 0, 0
+        sorted_objs = combine_index(
+            bm25_objs, hnsw_objs, bm25_scores, hnsw_scores, alpha
+        )
+        sorted_objs = [s for s in sorted_objs if s not in checked_obj_dict]
+
+        obj_idx = 0
+        early_stop = 0
         while len(checked_obj_dict) < args.k:
-            # rerank the objs if the alpha difference is greater than the threshold
-            # check the objs from the start of the list
-            if alpha_diff >= ALPHA_DIFF:
-                sorted_objs = combine_index(
-                    bm25_objs, hnsw_objs, bm25_scores, hnsw_scores, alpha
-                )
-                obj_idx = 0
             # check the next top_k objs
             objs_to_check = sorted_objs[obj_idx : obj_idx + args.top_k]
             new_pos_objs = llm_check(
@@ -162,17 +176,9 @@ def solve_query(
             obj_idx += args.top_k
             # calculate the alpha based on the scores of the two indices
             bm25_score, hnsw_score = score_index(bm25_objs, hnsw_objs, checked_obj_dict)
-            alpha_new = (
-                bm25_score / (bm25_score + hnsw_score)
-                if bm25_score + hnsw_score > 0
-                else 0.5
-            )
-            alpha_diff = abs(alpha_new - alpha)
-            alpha = alpha_new
-            print(
-                f"BM25 Score: {bm25_score:.4f}, HNSW Score: {hnsw_score:.4f}, "
-                f"Alpha: {alpha:.4f}, Alpha Diff: {alpha_diff:.4f}"
-            )
+            print(f"Checked objects: {objs_to_check}")
+            print(f"New positive objects: {new_pos_objs}")
+            print(f"BM25 Score: {bm25_score:.4f}, HNSW Score: {hnsw_score:.4f}")
             if (
                 len(cur_iter_pos_objs) >= 2
                 and len(cur_iter_pos_objs) >= len(pos_objs) * NEW_POS_RATIO
@@ -183,15 +189,30 @@ def solve_query(
             for obj in objs_to_check:
                 if checked_obj_dict.get(obj, 0) == 1:
                     pos_num += 1
-            if pos_num == 0 and (len(pos_objs) > 0 or len(cur_iter_pos_objs) > 0):
-                print(f"Step {step}: No results found for query: {query}")
-                break
+            if pos_num == 0:
+                if len(cur_iter_pos_objs) > 0:
+                    print(f"Step {step}: No more results found for query: {query}")
+                    break
+                else:
+                    early_stop += 1
+                    if early_stop >= 2:
+                        print(f"Step {step}: Early stop for query: {query}")
+                        break
             else:
+                early_stop = 0
                 print(f"Step {step}: new {pos_num} results found for query: {query}")
         pos_objs.extend(cur_iter_pos_objs)
         last_iter_pos_objs = list(cur_iter_pos_objs)
-        if len(cur_iter_pos_objs) == 0:
+        if len(cur_iter_pos_objs) == 0 and step > 0:
             break
+
+    new_query_objs = last_iter_pos_objs
+    if len(new_query_objs) > 0:
+        query_scores_new = score_query(
+            reformat_template.format(query=query), new_query_objs
+        )
+        query_scores.update(query_scores_new)
+
     return {
         "query": query,
         "pred": pos_objs,
@@ -244,7 +265,8 @@ if __name__ == "__main__":
         batch_size = 128
         attribute = cols[0]
         reformat_template = (
-            f"The {attribute}" + " that is the same as or a type of '{query}'."
+            f"According to the {attribute} name, the {attribute}"
+            + " is the same as or a type of '{query}'."
         )
         llm_template = "Is '{value}' the same as or a type of '{query}'? Directly answer with 'Yes' or 'No'."
     corpus = df[attribute].values.tolist()
@@ -274,5 +296,8 @@ if __name__ == "__main__":
         result["time"] = time.time() - start_time
         results.append(result)
         save_results(results, output_path)
+        cnt += 1
+        if cnt > 20:
+            break
     # save results
     save_results(results, output_path)

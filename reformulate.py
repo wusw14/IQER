@@ -7,38 +7,40 @@ import numpy as np
 @ppl
 def gen_reformulate(cond: str, col: str, value: list, history: list = []):
     SystemMessage(
-        "You are a data expert skilled in semantic interpretation and pattern matching for database systems."
+        "You are a data expert skilled in semantic interpretation, pattern matching, and generating diverse values for database systems."
     )
 
     "Task: Generate values that match both the query condition and the formatting style of a given database table column."
 
-    "Generate 2-5 possible values that:"
+    "Generate 2-5 possible values that meet all of the following criteria:"
     with NumberedList():
-        "Are consistent with the format/style of the example values."
-        "Satisfy the specified query condition."
-        "Vary realistically (avoid simple patterns)."
-        "If you know the answer for the condition, please provide the answer directly. If you are not sure about the answer, please provide a list of possible values that could satisfy the condition."
+        "Match the format/style of the provided sample values exactly."
+        "Satisfy the specified query condition with high semantic accuracy."
+        "Vary meaningfully across different dimensions (e.g., length, content, style variation within valid constraints)."
+        "Avoid predictable or repetitive patterns."
+        "If you are certain about the complete set of correct answers, return them directly. Otherwise, provide a realistic and diverse list of plausible candidates."
 
-    "## Examples"
+    "## Example"
     "Original Condition: Country in Southeast Asia"
     "Column: country"
     "Sample Values: ['China', 'India', 'Japan', 'Canada', 'France']"
     "Output:"
-    "<thought>The condition requires countries geographically in Southeast Asia. The samples show proper noun country names in title case. Must generate only sovereign nations from this region in identical format.</thought>"
+    "<thought>The condition requires countries geographically located in Southeast Asia. The sample values show full official names of sovereign nations in title case. Only true Southeast Asian countries should be included, formatted consistently.</thought>"
     "<answer>Brunei | Cambodia | Indonesia | Laos | Malaysia | Myanmar | Philippines | Singapore | Thailand | Vietnam</answer>"
 
-    "\nPlease analyze the following condition and provide the output in the same format as the examples."
+    "\nPlease analyze the following condition and provide output in the same format as above."
     "Original Condition: " + cond
     "Column: " + col
     f"Sample Values: {value}"
     if len(history) > 0:
-        "Prvious Generated Values:"
+        "Previously Generated Values:"
         for h in history:
             f"{h}"
-        "The previous generated values are not suitable. Please regenerate more suitable values."
+        "Please generate additional values that are distinct from the previously generated ones while still satisfying the condition."
+
     "Output:"
-    "<thought>Analyze both the semantic intent of the condition AND all observable formatting patterns in the samples.</thought>"
-    "<answer>Generate values here, separated by |</answer>"
+    "<thought>Analyze the semantic intent of the condition, the formatting rules implied by the sample values, and ensure diversity among the values.</thought>"
+    "<answer>Generate values here, separated by |; if no more values can be generated, respond with 'None'.</answer>"
 
     return gen()
 

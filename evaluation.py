@@ -57,10 +57,17 @@ if __name__ == "__main__":
         pred = d["pred"]
         time_list.append(d.get("time", 0))
         retrieved = d.get("retrieved", pred)
+        query_scores = d.get("query_scores", {})
         if len(gt) == 0:
             continue
         k = len(retrieved)
         k_list.append(k)
+        pred_org = list(pred)
+        pred = []
+        for p in pred_org:
+            score = query_scores.get(p, 2)
+            if score > 0:
+                pred.append(p)
         if len(pred) == 0:
             precision, recall, f1 = 0, 0, 0
         else:
@@ -70,15 +77,16 @@ if __name__ == "__main__":
             elif type(gt[0]) == int and type(pred[0]) == str:
                 gt = [corpus[i] for i in gt]
             # calculate precision, recall, f1
-            retrieve_recall = len(set(retrieved) & set(gt)) / len(gt)
-            retrieve_recall_list.append(retrieve_recall)
             tp = len(set(pred) & set(gt))
             precision = tp / len(pred)
             recall = tp / len(gt)
             f1 = 2 * precision * recall / max(precision + recall, 1e-6)
+        retrieve_recall = len(set(retrieved) & set(gt)) / len(gt)
+        retrieve_recall_list.append(retrieve_recall)
         if recall < 0.5:
             print(f"Query: {query}")
             print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
+            print(f"Retrieved Recall: {retrieve_recall:.4f}")
             print(f"Pred: {pred}")
             print(f"GT: {gt}")
             print("==========================")
