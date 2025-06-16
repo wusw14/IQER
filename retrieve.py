@@ -1,125 +1,19 @@
-from rank_bm25 import BM25Okapi
-import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-import pickle
-import hnswlib
 from sentence_transformers import SentenceTransformer
-
-# from colbert.infra import Run, RunConfig, ColBERTConfig
-# from colbert import Indexer
-# from colbert import Searcher
-# from colbert.data import Queries
-import os
-from load_data import load_data
 import numpy as np
-import json
-import sys
-import time
-from collections import defaultdict
-import numpy as np
+from index import BM25Index, HNSWIndex
 
 
-def hnsw_query(corpus: list, query: list, dataset_name: str, top_n=10):
-    # encode query
-    query = [q.lower() for q in query]
-    emb_model = "sentence-transformers/all-MiniLM-L6-v2"
-    query_embedding = SentenceTransformer(emb_model).encode(query, batch_size=512)
-    emb_dim = query_embedding.shape[1]
-    # load HNSW index
-    index_path = f"index/{dataset_name}_hnsw_index.bin"
-    p = hnswlib.Index(space="cosine", dim=emb_dim)  # assuming 768-dim embeddings
-    p.load_index(index_path)
-    # search for nearest neighbors
-    labels, distances = p.knn_query(query_embedding, k=top_n)
-    results = []
-    scores = []
-    unique_results = []
-    for i, q in enumerate(query):
-        result, score = [], []
-        for j in range(top_n):
-            doc_id = int(labels[i][j])
-            result.append(doc_id)
-            score.append(1 - distances[i][j])
-        results.append(result)
-        scores.append(score)
-        unique_results.extend(result)
-    unique_results = list(set(unique_results))
-    # get the embeddings of the unique results
-    results_embs = p.get_items(unique_results, return_type="numpy")
-    return results, scores, query_embedding, unique_results, results_embs
-
-
-def bm25_query(corpus: list, query: list, dataset_name: str, top_n=10):
-    # load BM25 index
-    with open(f"index/{dataset_name}_bm25_index.pkl", "rb") as f:
-        bm25 = pickle.load(f)
-
-    stop_words = set(stopwords.words("english"))
-    results = []
-    scores = []
-    org_scores = []
-    for q in query:
-        # tokenization
-        tokenized_query = [
-            token for token in word_tokenize(q.lower()) if token not in stop_words
-        ]
-        score = bm25.get_scores(tokenized_query)
-        org_scores.append(score)
-        result = np.argsort(score)[::-1][:top_n].tolist()  # get top_n indices
-        score = np.array(score)[result]
-        results.append(result)
-        scores.append(score)
-    return results, scores, org_scores
-
-
-# def colbert_query(corpus: list, query: list, dataset_name: str, top_n=10):
-#     # transform the query to tsv format if not exists
-#     # if not os.path.exists(f"data/{dataset_name}_query.tsv"):
-#     with open(f"data/{dataset_name}_query.tsv", "w") as f:
-#         for i, q in enumerate(query):
-#             f.write(f"{i}\t{q}\n")
-#     with Run().context(RunConfig(nranks=1, experiment=dataset_name)):
-#         config = ColBERTConfig(nbits=2, root=dataset_name)
-#         searcher = Searcher(index=dataset_name, config=config)
-#         queries = Queries(f"data/{dataset_name}_query.tsv")
-#         ranking = searcher.search_all(queries, k=top_n)
-#     ranking = ranking.data
-#     results = []
-#     scores = []
-#     for i, q in enumerate(query):
-#         result = []
-#         score = []
-#         for j in range(min(top_n, len(ranking[i]))):
-#             doc_id = ranking[i][j][0]
-#             result.append(doc_id)
-#             score.append(ranking[i][j][2])
-#         results.append(result)
-#         scores.append(score)
-#     return results, scores
-
-
-def agg_results(results, scores, k):
-    obj_score_sum, obj_score_max = {}, {}
-    for res, score in zip(results, scores):
-        for obj, s in zip(res, score):
-            if obj not in obj_score_sum:
-                obj_score_sum[obj] = 0
-                obj_score_max[obj] = -1e6
-            obj_score_sum[obj] += s
-            obj_score_max[obj] = max(obj_score_max[obj], s)
-    obj_score = {}
-    num = len(results)
-    for obj, s_sum in obj_score_sum.items():
-        obj_score[obj] = s_sum / num + obj_score_max[obj]
-    # get top k objects
-    sorted_obj_score = sorted(obj_score.items(), key=lambda x: x[1], reverse=True)
-    sorted_objs = [obj for obj, _ in sorted_obj_score[:k]]
-    sorted_scores = [score for _, score in sorted_obj_score[:k]]
-    return sorted_objs, sorted_scores
-
-
-def retrieve_corpus(query_scores, corpus, args, checked_results={}):
+def retrieve_corpus(
+    query_scores,
+    corpus: list[str],
+    args: dict,
+    checked_results: dict[str, int] = {},
+) -> tuple[list[str], list[float], list[str], list[float]]:
+    """
+    Retrieve corpus from BM25 and HNSW index
+    """
+    bm25_index = BM25Index(corpus, args.dataset)
+    hnsw_index = HNSWIndex(corpus, args.dataset)
     if type(query_scores) == list:
         query_list = list(query_scores)
         weights = [1.0 / len(query_list) for _ in query_list]
@@ -131,6 +25,7 @@ def retrieve_corpus(query_scores, corpus, args, checked_results={}):
         weights = weights.reshape(-1, 1)
     else:
         raise ValueError(f"Invalid query_scores type: {type(query_scores)}")
+
     if len(checked_results) > 0:
         neg_queries = [q for q, v in checked_results.items() if v == 0]
         if len(neg_queries) > 5:
@@ -138,11 +33,9 @@ def retrieve_corpus(query_scores, corpus, args, checked_results={}):
     else:
         neg_queries = []
 
-    bm25_results, bm25_scores, pos_bm25_scores = bm25_query(
-        corpus, query_list, args.dataset, args.k
-    )
+    bm25_results, bm25_scores, pos_bm25_scores = bm25_index.search(query_list, args.k)
     if len(neg_queries) > 0:
-        _, _, neg_bm25_scores = bm25_query(corpus, neg_queries, args.dataset, args.k)
+        _, _, neg_bm25_scores = bm25_index.search(neg_queries, args.k)
     else:
         neg_bm25_scores = None
     bm25_results, bm25_scores = agg_bm25_results(
@@ -153,12 +46,14 @@ def retrieve_corpus(query_scores, corpus, args, checked_results={}):
         args.k,
     )
     bm25_results = [corpus[i] for i in bm25_results]
-    hnsw_results, hnsw_scores, query_embs, unique_results, results_embs = hnsw_query(
-        corpus, query_list, args.dataset, args.k
+    # normalize bm25 scores
+    bm25_scores = np.array(bm25_scores)
+    bm25_scores = (bm25_scores - bm25_scores[-1]) / (bm25_scores[0] - bm25_scores[-1])
+    hnsw_results, hnsw_scores, query_embs, unique_results, results_embs = (
+        hnsw_index.search(query_list, args.k)
     )
     if len(neg_queries) > 0:
-        emb_model = "sentence-transformers/all-MiniLM-L6-v2"
-        neg_query_embs = SentenceTransformer(emb_model).encode(
+        neg_query_embs = SentenceTransformer(hnsw_index.emb_model).encode(
             neg_queries, batch_size=512
         )
         # normalize the query embeddings
@@ -172,10 +67,22 @@ def retrieve_corpus(query_scores, corpus, args, checked_results={}):
         query_embs, unique_results, results_embs, neg_query_emb, weights, args.k
     )
     hnsw_results = [corpus[i] for i in hnsw_results]
+    # normalize hnsw scores
+    hnsw_scores = np.array(hnsw_scores)
+    hnsw_scores = (hnsw_scores - hnsw_scores[-1]) / (hnsw_scores[0] - hnsw_scores[-1])
     return bm25_results, bm25_scores, hnsw_results, hnsw_scores
 
 
-def agg_bm25_results(bm25_results, pos_bm25_scores, neg_bm25_scores, weights, k):
+def agg_bm25_results(
+    bm25_results: list[list[int]],
+    pos_bm25_scores: list[list[float]],
+    neg_bm25_scores,
+    weights: np.ndarray,
+    k: int,
+) -> tuple[list[int], list[float]]:
+    """
+    Aggregate BM25 results from multiple queries
+    """
     retrieved_ids = []
     for res in bm25_results:
         retrieved_ids.extend(res)
@@ -200,8 +107,16 @@ def agg_bm25_results(bm25_results, pos_bm25_scores, neg_bm25_scores, weights, k)
 
 
 def agg_hnsw_results(
-    query_embs, unique_results, results_embs, neg_query_emb, weights, k
-):
+    query_embs: np.ndarray,
+    unique_results: list[int],
+    results_embs: np.ndarray,
+    neg_query_emb,
+    weights: np.ndarray,
+    k: int,
+) -> tuple[list[int], list[float]]:
+    """
+    Aggregate HNSW results from multiple queries
+    """
     # normalize the query embeddings
     query_embs = query_embs / np.linalg.norm(query_embs, axis=1, keepdims=True)
     # calculate the similarity between the query and the results
