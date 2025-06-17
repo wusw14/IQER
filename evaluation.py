@@ -24,10 +24,12 @@ def print_case(corpus, query, pred, gt, rec):
 
 if __name__ == "__main__":
     dataset_name = sys.argv[1]
-    result_dir = sys.argv[2] if len(sys.argv) > 2 else "results"
-    method = sys.argv[3] if len(sys.argv) > 3 else "llm"
+    exp_name = sys.argv[2]
+    method = sys.argv[3] if len(sys.argv) > 3 else "weighted"
     df, query_answer, query_template, filename = load_data(dataset_name)
-    result_data = json.load(open(f"{result_dir}/{method}/{dataset_name}.json", "r"))
+    result_data = json.load(
+        open(f"results/{exp_name}/{dataset_name}_{method}.json", "r")
+    )
     # result_data = {d["query"]: d["pred"] for d in result_data}
     # gt_data = json.load(open(f"{result_dir}/{method}/{dataset_name}_refined.json", "r"))
     # gt_data = {d["query"]: d["answers"] for d in gt_data}
@@ -99,6 +101,6 @@ if __name__ == "__main__":
     print(f"pre: {avg_pre:.2f}")
     print(f"rec: {avg_rec:.2f}")
     print(f"f1: {avg_f1:.2f}")
-    print(f"Average_k: {np.mean(k_list)}")
+    print(f"Average_k: {np.mean(k_list):.2f}")
     print(f"Average_retrieve_recall: {np.mean(retrieve_recall_list) * 100:.2f}")
-    print(f"Average_time: {np.mean(time_list)}")
+    print(f"Average_time: {np.mean(time_list):.2f}")

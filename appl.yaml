@@ -24,7 +24,7 @@ servers:
     base_url: http://localhost:1118/v1
     api_key: "llama"
     max_tokens: 1024
-    temperature: 0.1
+    temperature: 0.0
   llama-t0:
     template: llama
     temperature: 0.0
