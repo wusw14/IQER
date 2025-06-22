@@ -1,6 +1,14 @@
 from sentence_transformers import SentenceTransformer
 import numpy as np
 from index import BM25Index, HNSWIndex
+from pydantic import BaseModel
+
+
+class RetrievedInfo(BaseModel):
+    bm25_objs: list[str]
+    bm25_scores: list[float]
+    hnsw_objs: list[str]
+    hnsw_scores: list[float]
 
 
 def retrieve_corpus(
@@ -8,7 +16,7 @@ def retrieve_corpus(
     corpus: list[str],
     args: dict,
     checked_results: dict[str, int] = {},
-) -> tuple[list[str], list[float], list[str], list[float]]:
+) -> RetrievedInfo:
     """
     Retrieve corpus from BM25 and HNSW index
     """
@@ -91,12 +99,12 @@ def retrieve_corpus(
     # hnsw_scores = (hnsw_scores - hnsw_scores[-1]) / (
     #     hnsw_scores[0] - hnsw_scores[-1] + 1e-6
     # )
-    retrieved_info = {
-        "bm25_objs": bm25_objs,
-        "bm25_scores": bm25_scores,
-        "hnsw_objs": hnsw_objs,
-        "hnsw_scores": hnsw_scores,
-    }
+    retrieved_info = RetrievedInfo(
+        bm25_objs=bm25_objs,
+        bm25_scores=bm25_scores,
+        hnsw_objs=hnsw_objs,
+        hnsw_scores=hnsw_scores,
+    )
     return retrieved_info
 
 
@@ -166,7 +174,7 @@ def agg_bm25_results(
         neg_bm25_scores = neg_bm25_scores[:, retrieved_ids]
         neg_scores = np.mean(neg_bm25_scores, axis=0)
         best_param = choose_best_param(pos_scores, neg_scores, retrieved_ids, pos_ids)
-        scores = pos_scores - neg_scores * best_param / 10
+        scores = pos_scores - neg_scores * best_param
     else:
         scores = pos_scores
     retrieved_ids, scores = zip(
@@ -212,7 +220,7 @@ def agg_hnsw_results(
     if neg_query_emb is not None:
         neg_scores = np.dot(neg_query_emb, results_embs.T)
         best_param = choose_best_param(pos_scores, neg_scores, retrieved_ids, pos_ids)
-        scores = pos_scores - neg_scores * best_param / 10
+        scores = pos_scores - neg_scores * best_param
     else:
         scores = pos_scores
     retrieved_ids, scores = zip(

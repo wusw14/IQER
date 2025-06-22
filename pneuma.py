@@ -19,13 +19,19 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dir", type=str, default="../TAG-Bench")
     parser.add_argument("--dataset", type=str, default="TAG")
-    parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--test_type", type=str, default="dev")
     parser.add_argument("--method", type=str, default="llm_check")
     parser.add_argument("--k", type=int, default=100)
     parser.add_argument("--top_k", type=int, default=10)
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--alpha", type=float, default=10)
+    parser.add_argument(
+        "--index_combine_method",
+        type=str,
+        choices=["weighted", "merge"],
+        default="weighted",
+    )
+    parser.add_argument("--exp_name", type=str, default="debug")
     return parser.parse_args()
 
 
@@ -152,16 +158,11 @@ def solve_query(
     if_reformuation = False
     warm_up_time = time.time() - start_time
     print(f"Query list: {query_list}")
-    bm25_results, bm25_scores, hnsw_results, hnsw_scores = retrieve_corpus(
-        query_list, corpus, args
-    )
-    # normalize scores with min max normalization
-    bm25_scores = (bm25_scores - min(bm25_scores)) / (
-        max(bm25_scores) - min(bm25_scores)
-    )
-    hnsw_scores = (hnsw_scores - min(hnsw_scores)) / (
-        max(hnsw_scores) - min(hnsw_scores)
-    )
+    retrieved_info = retrieve_corpus(query_list, corpus, args)
+    bm25_results = retrieved_info.bm25_objs
+    bm25_scores = retrieved_info.bm25_scores
+    hnsw_results = retrieved_info.hnsw_objs
+    hnsw_scores = retrieved_info.hnsw_scores
     # aggregate scores from two indices
     obj_scores = defaultdict(float)
     for bm_obj, bm_score in zip(bm25_results, bm25_scores):
@@ -179,8 +180,6 @@ def solve_query(
         checked_results = update_checked_results(
             checked_results, objs_to_check, filtered_objs
         )
-        if len(filtered_objs) == 0 and np.sum(list(checked_results.values())) > 0:
-            break
         idx += args.top_k
     checked_objs = list(checked_results.keys())
     results = []
@@ -204,19 +203,21 @@ if __name__ == "__main__":
     args = parse_args()
     print(args)
 
+    args.output_dir = f"results/{args.exp_name}"
     os.makedirs(args.output_dir, exist_ok=True)
-    output_path = os.path.join(args.output_dir, f"{args.dataset}.json")
+    output_path = os.path.join(args.output_dir, f"{args.dataset}_{args.alpha}.json")
     # load results
-    if os.path.exists(output_path):
+    if os.path.exists(output_path) and args.exp_name != "debug":
         results = json.load(open(output_path, "r"))
+        results = [d for d in results if len(d["pred"]) > 0]
         processed_queries = [d["query"] for d in results]
     else:
         results = []
         processed_queries = []
     # load data
     df, query_answer, query_template, path = load_data(args.dataset)
+    # TODO: rename the variables
     if args.dataset == "paper":
-        corpus = df["abstracts"].values.tolist()
         batch_size = 1024
         attribute = "abstracts"
         reformat_template = "According to the abstract, the paper is about {query}."
@@ -224,24 +225,22 @@ if __name__ == "__main__":
             "The abstract of the paper is: {value}. Is this paper about {query}?"
         )
     elif args.dataset == "product":
-        corpus = df["Product_Title"].values.tolist()
         batch_size = 512
         attribute = "Product_Title"
         reformat_template = "According to the product title, the product is the same as or a type of '{query}'."
-        # llm_template = "The product title is: {value}. Is this product the same as or a type of '{query}'?"
         llm_template = "Is '{value}' the same as or a type of '{query}'? Directly answer with 'Yes' or 'No'."
     else:
         cols = df.columns
-        corpus = df[cols[0]].values.tolist()
         batch_size = 128
         attribute = cols[0]
         reformat_template = (
-            # f"The {attribute}" + " that is the same as or a type of '{query}'."
-            f"The {attribute}"
-            + " is '{query}'."
+            f"According to the {attribute} name, the {attribute}"
+            + " is the same as or a type of '{query}'."
         )
-        # llm_template = "Is '{value}' the same as '{query}' or a type of '{query}'?"
         llm_template = "Is '{value}' the same as or a type of '{query}'? Directly answer with 'Yes' or 'No'."
+    corpus = df[attribute].values.tolist()
+
+    args.llm_template = llm_template
 
     # solve query
     print(
@@ -254,23 +253,22 @@ if __name__ == "__main__":
         if len(answers) == 0:
             continue
         start_time = time.time()
-        try:
-            result = solve_query(
-                query,
-                attribute,
-                corpus,
-                args,
-                path,
-                reformat_template,
-                llm_template,
-                answers,
-            )
-            result["answers"] = answers
-            result["time"] = time.time() - start_time
-            results.append(result)
-        except Exception as e:
-            print(f"[ERROR] {e}")
-            continue
+        result = solve_query(
+            query,
+            attribute,
+            corpus,
+            args,
+            path,
+            reformat_template,
+            llm_template,
+            answers,
+        )
+        result["answers"] = answers
+        result["time"] = time.time() - start_time
+        results.append(result)
         save_results(results, output_path)
+        cnt += 1
+        if args.exp_name == "debug" and cnt >= 5:
+            break
     # save results
     save_results(results, output_path)

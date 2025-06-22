@@ -74,7 +74,7 @@ if __name__ == "__main__":
         if query not in refined_solved_queries:
             continue
         cond = reformat_template.format(query=query)
-        filtered_pred = llm_check_batch(cond, pred)
+        filtered_pred = llm_check(query, corpus, template)
         d["pred"] = filtered_pred
         print(f"Query: {query}\nPred: {pred}\nFiltered Pred: {filtered_pred}")
         save_results(results, output_path)

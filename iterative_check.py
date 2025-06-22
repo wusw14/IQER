@@ -1,12 +1,14 @@
 from collections import defaultdict
+
+import numpy as np
 from constants import ALPHA, NEW_POS_RATIO
 from llm_check import llm_check
-import numpy as np
+from retrieve import RetrievedInfo
 
 
 def iterative_check_retrieved_objs(
     query: str,
-    retrieved_info: dict,
+    retrieved_info: RetrievedInfo,
     args,
     checked_obj_dict: dict[str, int],
     step: int,
@@ -44,7 +46,7 @@ def update_checked_obj_dict(
 
 def weighted_combine_check_objs(
     query: str,
-    retrieved_info: dict,
+    retrieved_info: RetrievedInfo,
     args,
     checked_obj_dict: dict[str, int],
     step: int,
@@ -58,6 +60,7 @@ def weighted_combine_check_objs(
     while len(checked_obj_dict) < args.k:
         # check the next top_k objs
         objs_to_check = sorted_objs[obj_idx : obj_idx + args.top_k]
+        objs_to_check = objs_to_check[: args.k - len(checked_obj_dict)]
         new_pos_objs = llm_check(
             query, objs_to_check, args.llm_template, checked_obj_dict
         )
@@ -71,37 +74,38 @@ def weighted_combine_check_objs(
         if (
             len(cur_iter_pos_objs) >= 2
             and len(cur_iter_pos_objs) >= past_pos_num * NEW_POS_RATIO
+            and step < args.steps - 1
         ):
             print(f"Step {step}: {len(cur_iter_pos_objs)} results found")
             break
-        pos_num = 0
-        for obj in objs_to_check:
-            if checked_obj_dict.get(obj, 0) == 1:
-                pos_num += 1
-        if pos_num == 0:
-            if len(cur_iter_pos_objs) > 0:
-                print(f"Step {step}: No more results found for query: {query}")
-                break
-            else:
-                early_stop += 1
-                if early_stop >= 2 and past_pos_num > 0:
-                    print(f"Step {step}: Early stop for query: {query}")
-                    break
-        else:
-            early_stop = 0
-            print(f"Step {step}: new {pos_num} results found for query: {query}")
+        # pos_num = 0
+        # for obj in objs_to_check:
+        #     if checked_obj_dict.get(obj, 0) == 1:
+        #         pos_num += 1
+        # if pos_num == 0:
+        #     if len(cur_iter_pos_objs) > 0:
+        #         print(f"Step {step}: No more results found for query: {query}")
+        #         break
+        #     else:
+        #         early_stop += 1
+        #         if early_stop >= 2 and past_pos_num > 0:
+        #             print(f"Step {step}: Early stop for query: {query}")
+        #             break
+        # else:
+        #     early_stop = 0
+        #     print(f"Step {step}: new {pos_num} results found for query: {query}")
     return cur_iter_pos_objs, checked_obj_dict
 
 
 def merge_combine_check_objs(
     query: str,
-    retrieved_info: dict,
+    retrieved_info: RetrievedInfo,
     args,
     checked_obj_dict: dict[str, int],
     step: int,
 ):
-    bm25_objs = retrieved_info["bm25_objs"]
-    hnsw_objs = retrieved_info["hnsw_objs"]
+    bm25_objs = retrieved_info.bm25_objs
+    hnsw_objs = retrieved_info.hnsw_objs
     bm25_idx, hnsw_idx = 0, 0
     cur_iter_pos_objs = []
     past_pos_num = sum(checked_obj_dict.values())
@@ -129,6 +133,8 @@ def merge_combine_check_objs(
             bm25_objs_tobe_checked = objs_to_check[: args.top_k]
             hnsw_objs_tobe_checked = objs_to_check[args.top_k :]
         objs_to_check = list(set(objs_to_check))
+        objs_to_check = [o for o in objs_to_check if o not in checked_obj_dict]
+        objs_to_check = objs_to_check[: args.k - len(checked_obj_dict)]
         new_pos_objs = llm_check(
             query, objs_to_check, args.llm_template, checked_obj_dict
         )
@@ -143,34 +149,35 @@ def merge_combine_check_objs(
         if (
             len(cur_iter_pos_objs) >= 2
             and len(cur_iter_pos_objs) >= past_pos_num * NEW_POS_RATIO
+            and step < args.steps - 1
         ):
             print(f"Step {step}: {len(cur_iter_pos_objs)} results found")
             break
-        elif bm25_score == 0 and hnsw_score == 0:
-            if len(cur_iter_pos_objs) > 0:
-                print(f"Step {step}: No more results found for query: {query}")
-                break
-            else:
-                early_stop += 1
-                if early_stop >= 2 and past_pos_num > 0:
-                    print(f"Step {step}: Early stop for query: {query}")
-                    break
-        else:
-            early_stop = 0
+        # elif bm25_score == 0 and hnsw_score == 0:
+        #     if len(cur_iter_pos_objs) > 0:
+        #         print(f"Step {step}: No more results found for query: {query}")
+        #         break
+        #     else:
+        #         early_stop += 1
+        #         if early_stop >= 2 and past_pos_num > 0:
+        #             print(f"Step {step}: Early stop for query: {query}")
+        #             break
+        # else:
+        #     early_stop = 0
     return cur_iter_pos_objs, checked_obj_dict
 
 
 def combine_index(
-    retrieved_info: dict,
+    retrieved_info: RetrievedInfo,
     alpha: float,
 ) -> list[int]:
     """
     Combine the BM25 and HNSW indices
     """
-    bm25_objs = retrieved_info["bm25_objs"]
-    hnsw_objs = retrieved_info["hnsw_objs"]
-    bm25_scores = retrieved_info["bm25_scores"]
-    hnsw_scores = retrieved_info["hnsw_scores"]
+    bm25_objs = retrieved_info.bm25_objs
+    hnsw_objs = retrieved_info.hnsw_objs
+    bm25_scores = retrieved_info.bm25_scores
+    hnsw_scores = retrieved_info.hnsw_scores
     obj_scores = defaultdict(float)
     for i, bm25_score in enumerate(bm25_scores):
         obj_scores[bm25_objs[i]] = bm25_score * alpha

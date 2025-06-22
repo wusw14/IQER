@@ -32,8 +32,8 @@ class BM25Index(Index):
     def __init__(self, corpus: list[str], dataset_name: str):
         super().__init__(corpus, dataset_name)
         self.index_path = f"index/{dataset_name}_bm25_index.pkl"
-        self.index = self.build_index()
         self.stop_words = set(stopwords.words("english"))
+        self.index = self.build_index()
 
     def build_index(self) -> BM25Okapi:
         """
