@@ -2,6 +2,7 @@ from utils import sample_table, parse_response
 from appl import ppl, gen, SystemMessage, convo, records, SystemRole
 from appl.compositor import Tagged, NumberedList, DashList
 import numpy as np
+from constants import REFORMULATE_THRESHOLD
 
 
 @ppl
@@ -10,26 +11,24 @@ def gen_reformulate(cond: str, col: str, value: list, history: list = []):
         "You are a data expert skilled in semantic interpretation, pattern matching, and generating diverse values for database systems."
     )
 
-    "Task: Generate values that match both the query condition and the formatting style of a given database table column."
-
-    "Generate 2-5 possible values that meet all of the following criteria:"
+    "Given a query condition, a column name, and sample values from the column, generate 2–5 new values that:"
     with NumberedList():
-        "Match the format/style of the provided sample values exactly."
-        "Satisfy the specified query condition with high semantic accuracy."
-        "Vary meaningfully across different dimensions (e.g., length, content, style variation within valid constraints)."
-        "Avoid predictable or repetitive patterns."
-        "If you are certain about the complete set of correct answers, return them directly. Otherwise, provide a realistic and diverse list of plausible candidates."
+        "Strictly satisfy the semantic meaning of the query condition."
+        "Match the formatting style and structure of the provided sample values (e.g., capitalization, abbreviations, naming conventions)."
+        "Are lexically distinct from both the query condition and sample values."
+        "Avoid predictable sequences, repetition, or trivial rewording."
+    "If no additional values can be generated without repeating or violating the above criteria, respond with None."
 
-    "## Example"
-    "Original Condition: Country in Southeast Asia"
-    "Column: country"
-    "Sample Values: ['China', 'India', 'Japan', 'Canada', 'France']"
-    "Output:"
-    "<thought>The condition requires countries geographically located in Southeast Asia. The sample values show full official names of sovereign nations in title case. Only true Southeast Asian countries should be included, formatted consistently.</thought>"
-    "<answer>Brunei | Cambodia | Indonesia | Laos | Malaysia | Myanmar | Philippines | Singapore | Thailand | Vietnam</answer>"
+    # "## Example"
+    # "Original Condition: Country in Southeast Asia"
+    # "Column: country"
+    # "Sample Values: ['China', 'India', 'Japan', 'Canada', 'France']"
+    # "Output:"
+    # # "<thought>The condition requires countries geographically located in Southeast Asia. The sample values show full official names of sovereign nations in title case. Only true Southeast Asian countries should be included, formatted consistently.</thought>"
+    # "<answer>Brunei | Cambodia | Indonesia | Laos | Malaysia | Myanmar | Philippines | Singapore | Thailand | Vietnam</answer>"
 
-    "\nPlease analyze the following condition and provide output in the same format as above."
-    "Original Condition: " + cond
+    "\nPlease analyze the following condition and generate 2-5 diversified values that strictly satisfy the condition. The generated values should be separated by ' | '. If no more values can be generated, respond with 'None'. You only need to output the generated values, without any other text."
+    "Condition: " + cond
     "Column: " + col
     f"Sample Values: {value}"
     if len(history) > 0:
@@ -39,8 +38,8 @@ def gen_reformulate(cond: str, col: str, value: list, history: list = []):
         "Please generate additional values that are distinct from the previously generated ones while still satisfying the condition."
 
     "Output:"
-    "<thought>Analyze the semantic intent of the condition, the formatting rules implied by the sample values, and ensure diversity among the values.</thought>"
-    "<answer>Generate values here, separated by |; if no more values can be generated, respond with 'None'.</answer>"
+    # "<thought>Analyze the semantic intent of the condition, the formatting rules implied by the sample values, and ensure diversity among the values.</thought>"
+    # "<answer>Generated diversified values separated by ' | ', or 'None' if no more values can be generated.</answer>"
 
     return gen()
 
@@ -59,11 +58,15 @@ def reformulate(cond: str, col: str, value: list, history: list = []) -> str:
     """
     # sample_vals = np.random.choice(value, 5, replace=False)
     sample_vals = value
-    if len(sample_vals) > 5:
-        sample_vals = np.random.choice(sample_vals, 5, replace=False)
+    # if len(sample_vals) > 5:
+    #     sample_vals = np.random.choice(sample_vals, 5, replace=False)
+    print(f"Query Condition: {cond}")
     ans = gen_reformulate(cond, col, sample_vals, history=history)
-    ans = parse_response(ans, "answer")
-    values = ans.split("|")
+    print(f"LLM Reformulate: {ans}")
+    # ans = parse_response(ans, "answer")
+    values = str(ans).split("|")
+    if "None" in values:
+        return []
     values = [v.strip() for v in values]
     return values
 
@@ -160,3 +163,22 @@ def score_query(condition: str, query_list: list) -> list:
             if attempt > 3:
                 break
     return {q: 1 for q in query_list}
+
+
+def if_reformulate(query: str, checked_obj_dict: dict) -> bool:
+    """
+    Check if the query should be reformulated.
+    """
+    # no checked objects --> first time retrieval --> no need to reformulate
+    if len(checked_obj_dict) == 0:
+        return False
+
+    # no positive objects in the past retrieval --> reformulate
+    pos_num = np.sum(list(checked_obj_dict.values()))
+    if pos_num == 0:
+        return True
+
+    # if there exists significant difference between the similarity scores of the query and the retrieved objects
+    # --> reformulate
+
+    return False

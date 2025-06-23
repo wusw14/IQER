@@ -7,7 +7,7 @@ import hnswlib
 from sentence_transformers import SentenceTransformer
 import os
 import numpy as np
-
+import time
 
 # nltk.download("stopwords")
 # nltk.download("punkt")
@@ -66,6 +66,7 @@ class BM25Index(Index):
         results = []
         scores = []
         full_scores = []
+        unique_results = set()
         for q in query:
             # tokenization
             tokenized_query = [
@@ -79,14 +80,34 @@ class BM25Index(Index):
             score = np.array(score)[result]
             results.append(result)
             scores.append(score)
-        return results, scores, full_scores
+            unique_results.update(result)
+        unique_results = list(unique_results)
+        unique_scores = np.array(full_scores)[:, unique_results]
+        return results, scores, unique_results, unique_scores
+
+    def get_neg_scores(
+        self, query: list[str], unique_results: list[int]
+    ) -> list[list[float]]:
+        if len(query) == 0:
+            return None
+        scores = []
+        for q in query:
+            # tokenization
+            tokenized_query = [
+                token
+                for token in word_tokenize(q.lower())
+                if token not in self.stop_words
+            ]
+            score = self.index.get_batch_scores(tokenized_query, unique_results)
+            scores.append(score)
+        return scores
 
 
 class HNSWIndex:
     def __init__(self, corpus: list[str], dataset_name: str):
         self.corpus = corpus
         self.dataset_name = dataset_name
-        self.emb_model = "sentence-transformers/all-MiniLM-L6-v2"
+        self.emb_model = SentenceTransformer("all-MiniLM-L6-v2", device="cuda")
         self.dim = 384
         self.sim_metric = "cosine"
         self.index_path = f"index/{dataset_name}_hnsw_index.bin"
@@ -103,7 +124,7 @@ class HNSWIndex:
             p.load_index(self.index_path)
             return p
 
-        embs = SentenceTransformer(self.emb_model).encode(self.corpus, batch_size=512)
+        embs = self.emb_model.encode(self.corpus, batch_size=512)
         num_elements = embs.shape[0]
         print(f"num elements: {num_elements}, dim: {self.dim}")
 
@@ -135,15 +156,13 @@ class HNSWIndex:
         Return results, scores, query_embedding, unique_results, unique_results_embs
         """
         # encode query
+        start_time = time.time()
         query = [q.lower() for q in query]
-        query_embedding = SentenceTransformer(self.emb_model).encode(
-            query, batch_size=512
-        )
-        # load HNSW index
-        p = hnswlib.Index(space=self.sim_metric, dim=self.dim)
-        p.load_index(self.index_path)
+        query_embedding = self.emb_model.encode(query, batch_size=512)
+        # print(f"Time for HNSW query encoding: {time.time() - start_time:.4f}s")
         # search for nearest neighbors
-        labels, distances = p.knn_query(query_embedding, k=top_n)
+        labels, distances = self.index.knn_query(query_embedding, k=top_n)
+        # print(f"Time for HNSW search: {time.time() - start_time:.4f}s")
         results = []
         scores = []
         unique_results = []
@@ -158,5 +177,6 @@ class HNSWIndex:
             unique_results.extend(result)
         unique_results = list(set(unique_results))
         # get the embeddings of the unique results
-        unique_results_embs = p.get_items(unique_results, return_type="numpy")
+        unique_results_embs = self.index.get_items(unique_results, return_type="numpy")
+        # print(f"Time for HNSW unique results: {time.time() - start_time:.4f}s")
         return results, scores, query_embedding, unique_results, unique_results_embs

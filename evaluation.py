@@ -26,6 +26,7 @@ if __name__ == "__main__":
     dataset_name = sys.argv[1]
     exp_name = sys.argv[2]
     method = sys.argv[3] if len(sys.argv) > 3 else "weighted"
+    limit = int(sys.argv[4]) if len(sys.argv) > 4 else None
     df, query_answer, query_template, filename = load_data(dataset_name)
     result_data = json.load(
         open(f"results/{exp_name}/{dataset_name}_{method}.json", "r")
@@ -50,7 +51,11 @@ if __name__ == "__main__":
     time_list = []
     retrieve_recall_list = []
     # for d in gt_data:
+    cnt = 0
     for d in result_data:
+        if limit is not None and cnt >= limit:
+            break
+        cnt += 1
         query = d["query"]
         # gt = d["answers"]
         gt = query_answer.get(query, [])
@@ -85,13 +90,12 @@ if __name__ == "__main__":
             f1 = 2 * precision * recall / max(precision + recall, 1e-6)
         retrieve_recall = len(set(retrieved) & set(gt)) / len(gt)
         retrieve_recall_list.append(retrieve_recall)
-        if recall < 0.5:
-            print(f"Query: {query}")
-            print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
-            print(f"Retrieved Recall: {retrieve_recall:.4f}")
-            print(f"Pred: {pred}")
-            print(f"GT: {gt}")
-            print("==========================")
+        print(f"Query: {query}")
+        print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
+        print(f"Retrieved Recall: {retrieve_recall:.4f}")
+        print(f"Pred: {pred}")
+        print(f"GT: {gt}")
+        print("==========================")
         pre_list.append(precision)
         rec_list.append(recall)
         f1_list.append(f1)

@@ -62,7 +62,7 @@ def weighted_combine_check_objs(
         objs_to_check = sorted_objs[obj_idx : obj_idx + args.top_k]
         objs_to_check = objs_to_check[: args.k - len(checked_obj_dict)]
         new_pos_objs = llm_check(
-            query, objs_to_check, args.llm_template, checked_obj_dict
+            query.org_query, objs_to_check, args.llm_template, checked_obj_dict
         )
         cur_iter_pos_objs.extend(new_pos_objs)
         checked_obj_dict = update_checked_obj_dict(
@@ -71,13 +71,16 @@ def weighted_combine_check_objs(
         obj_idx += args.top_k
         print(f"Checked objects: {objs_to_check}")
         print(f"New positive objects: {new_pos_objs}")
-        if (
-            len(cur_iter_pos_objs) >= 2
-            and len(cur_iter_pos_objs) >= past_pos_num * NEW_POS_RATIO
-            and step < args.steps - 1
-        ):
-            print(f"Step {step}: {len(cur_iter_pos_objs)} results found")
+        if len(new_pos_objs) == 0:
+            print(f"Step {step}: No more results found for query: {query.org_query}")
             break
+        # if (
+        #     len(cur_iter_pos_objs) >= 2
+        #     and len(cur_iter_pos_objs) >= past_pos_num * NEW_POS_RATIO
+        #     and step < args.steps - 1
+        # ):
+        #     print(f"Step {step}: {len(cur_iter_pos_objs)} results found")
+        #     break
         # pos_num = 0
         # for obj in objs_to_check:
         #     if checked_obj_dict.get(obj, 0) == 1:
@@ -136,7 +139,7 @@ def merge_combine_check_objs(
         objs_to_check = [o for o in objs_to_check if o not in checked_obj_dict]
         objs_to_check = objs_to_check[: args.k - len(checked_obj_dict)]
         new_pos_objs = llm_check(
-            query, objs_to_check, args.llm_template, checked_obj_dict
+            query.org_query, objs_to_check, args.llm_template, checked_obj_dict
         )
         cur_iter_pos_objs.extend(new_pos_objs)
         checked_obj_dict = update_checked_obj_dict(
@@ -176,8 +179,8 @@ def combine_index(
     """
     bm25_objs = retrieved_info.bm25_objs
     hnsw_objs = retrieved_info.hnsw_objs
-    bm25_scores = retrieved_info.bm25_scores
-    hnsw_scores = retrieved_info.hnsw_scores
+    bm25_scores = retrieved_info.bm25_agg_scores
+    hnsw_scores = retrieved_info.hnsw_agg_scores
     obj_scores = defaultdict(float)
     for i, bm25_score in enumerate(bm25_scores):
         obj_scores[bm25_objs[i]] = bm25_score * alpha
