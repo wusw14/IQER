@@ -21,7 +21,7 @@ servers:
   llama:
     model: meta-llama/Llama-3.3-70B-Instruct
     provider: custom
-    base_url: http://localhost:1117/v1
+    base_url: http://localhost:1118/v1
     api_key: "llama"
     max_tokens: 1024
     temperature: 0.0

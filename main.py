@@ -4,7 +4,7 @@ import json
 import os
 from load_data import load_data
 import time
-from reformulate import reformulate, score_query, if_reformulate
+from reformulate import reformulate, score_query
 from retrieve import retrieve_corpus, calculate_reformulate_impact
 from iterative_check import iterative_check_retrieved_objs
 from query import Query
@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument("--k", type=int, default=100)
     parser.add_argument("--top_k", type=int, default=10)
     parser.add_argument("--steps", type=int, default=5)
-    parser.add_argument("--alpha", type=float, default=10)
+    parser.add_argument("--alpha", type=float, default=0.5)
     parser.add_argument(
         "--index_combine_method",
         type=str,
@@ -32,15 +32,21 @@ def parse_args():
     return parser.parse_args()
 
 
-def get_sample_values(checked_obj_dict: dict[str, int]) -> list[str]:
+def get_sample_values(
+    checked_obj_dict: dict[str, int], args, attribute: str
+) -> list[str]:
     """
     Get the sample values based on the checked objects
     """
-    pos_objs = [k for k, v in checked_obj_dict.items() if v == 1]
-    neg_objs = [k for k, v in checked_obj_dict.items() if v == 0]
-    if len(neg_objs) > 5:
-        neg_objs = np.random.choice(neg_objs, 5, replace=False)
-    samples = list(pos_objs) + list(neg_objs)
+    if len(checked_obj_dict) == 0:
+        temp_data = json.load(open(f"{args.path}/{args.dataset}_sample_values.json"))
+        samples = temp_data[attribute]
+    else:
+        pos_objs = [k for k, v in checked_obj_dict.items() if v == 1]
+        neg_objs = [k for k, v in checked_obj_dict.items() if v == 0]
+        if len(neg_objs) > 5:
+            neg_objs = np.random.choice(neg_objs, 5, replace=False)
+        samples = list(pos_objs) + list(neg_objs)
     return samples
 
 
@@ -69,13 +75,18 @@ def solve_query(
         # Reformulate the query
         start_time = time.time()
         if reformulate_impact > 0 or step == 1:
-            sample_values = get_sample_values(checked_obj_dict)
+            sample_values = get_sample_values({}, args, attribute)
             cur_generated_query_list = reformulate(
-                query.query_condition,
+                query.org_query,
                 attribute,
                 sample_values,
                 query.queries_from_generated,
             )
+            cur_generated_query_list = [
+                q
+                for q in cur_generated_query_list
+                if q not in checked_obj_dict and q != query.org_query
+            ]
         query.update_queries_from_generated(cur_generated_query_list)
         print(f"Reformulated query: {cur_generated_query_list}")
         reformulate_time += time.time() - start_time
@@ -87,7 +98,9 @@ def solve_query(
             query_scores_new = score_query(query.query_condition, new_query_objs)
             query.update_query_scores(query_scores_new)
             # select the diversified query words from the query list
-            query_list = query.select_diversified_query_words(hnsw_index.emb_model)
+            query_list = query.select_diversified_query_words(
+                hnsw_index.emb_model, checked_obj_dict
+            )
             print(
                 f"Step {step} Diversified query list ({len(query_list)}): {query_list}"
             )
@@ -109,20 +122,23 @@ def solve_query(
                 bm25_index,
                 hnsw_index,
                 neg_list,
-                query.queries_from_table,
+                query.pos_ids,
             )
             retrieve_time += time.time() - start_time
             query.last_query_list = query_list
             print(f"Time for retrieving: {time.time() - start_time:.4f}s")
         # iteratively examine the retrieved objs
         start_time = time.time()
-        cur_iter_pos_objs, checked_obj_dict = iterative_check_retrieved_objs(
-            query,
-            retrieved_info,
-            args,
-            checked_obj_dict,
-            step,
+        cur_iter_pos_objs, checked_obj_dict, best_alpha = (
+            iterative_check_retrieved_objs(
+                query,
+                retrieved_info,
+                args,
+                checked_obj_dict,
+                step,
+            )
         )
+        query.best_alpha = best_alpha
         check_time += time.time() - start_time
         query.update_queries_from_table(cur_iter_pos_objs, corpus)
         if len(cur_iter_pos_objs) == 0 and step > 0 and len(checked_obj_dict) >= args.k:
@@ -181,6 +197,7 @@ if __name__ == "__main__":
         processed_queries = []
     # load data
     df, query_answer, query_template, path = load_data(args.dataset)
+    args.path = path
     # TODO: rename the variables
     if args.dataset == "paper":
         batch_size = 1024

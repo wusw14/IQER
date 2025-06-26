@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from query import Query
 from typing import Optional
 import time
+from utils import cal_ndcg
 
 
 class RetrievedInfo(BaseModel):
@@ -100,33 +101,24 @@ def retrieve_corpus(
     return retrieved_info
 
 
-def if_combine_max_avg(pos_scores_avg, pos_scores_max, pos_ids, retrieved_ids) -> bool:
+def combine_max_avg(pos_scores_avg, pos_scores_max, pos_ids, retrieved_ids):
     if len(pos_ids) > 0:
-        sorted_ids, _ = zip(
-            *sorted(
-                zip(retrieved_ids, pos_scores_avg), key=lambda x: x[1], reverse=True
+        best_beta = 0.5
+        best_score = 0
+        for i in range(0, 11):
+            beta = i / 10
+            scores = beta * pos_scores_avg + (1 - beta) * pos_scores_max
+            sorted_ids, _ = zip(
+                *sorted(zip(retrieved_ids, scores), key=lambda x: x[1], reverse=True)
             )
-        )
-        avg_score = cal_ndcg(sorted_ids, pos_ids)
-        sorted_ids, _ = zip(
-            *sorted(
-                zip(retrieved_ids, pos_scores_max + pos_scores_avg),
-                key=lambda x: x[1],
-                reverse=True,
-            )
-        )
-        avg_max_score = cal_ndcg(sorted_ids, pos_ids)
-        return avg_score < avg_max_score
+            ndcg_score = cal_ndcg(sorted_ids, pos_ids)
+            if ndcg_score > best_score or (ndcg_score == best_score and beta == 0.5):
+                best_score = ndcg_score
+                best_beta = beta
+        print(f"Best beta (beta * avg + (1 - beta) * max): {best_beta:.1f}")
+        return best_beta * pos_scores_avg + (1 - best_beta) * pos_scores_max
     else:
-        return False
-
-
-def cal_ndcg(sorted_ids, pos_ids) -> float:
-    dcg = 0
-    for i, id in enumerate(sorted_ids):
-        if id in pos_ids:
-            dcg += 1 / np.log2(i + 2)
-    return dcg
+        return 0.5 * pos_scores_avg + 0.5 * pos_scores_max
 
 
 def choose_best_param(pos_scores, neg_scores, retrieved_ids, pos_ids) -> float:
@@ -146,7 +138,7 @@ def choose_best_param(pos_scores, neg_scores, retrieved_ids, pos_ids) -> float:
 
 
 def agg_results(
-    unique_objs: list[int],
+    unique_ids: list[int],
     pos_scores: list[list[float]],
     neg_scores: list[list[float]],
     k: int,
@@ -156,33 +148,30 @@ def agg_results(
     Aggregate BM25 results from multiple queries
     """
     pos_scores = np.array(pos_scores)
-    max_scalar = max(np.max(pos_scores), 1e-6)
     min_scalar = np.max(np.min(pos_scores, axis=1))
     pos_scores_avg = pos_scores.mean(axis=0)
     pos_scores_max = pos_scores.max(axis=0)
-    # # check if combine avg and max with pos_ids
-    # if if_combine_max_avg(pos_scores_avg, pos_scores_max, pos_ids, unique_objs):
-    #     pos_scores = (pos_scores_avg + pos_scores_max) / 2
-    #     print("Combine avg and max")
-    # else:
-    #     pos_scores = pos_scores_avg
-    #     print("Only use avg")
-    pos_scores = (pos_scores_avg + pos_scores_max) / 2
-    # print(f"max_scalar: {max_scalar:.4f}, min_scalar: {min_scalar:.4f}")
-    # score_distribution = np.percentile(pos_scores, list(range(0, 101, 5)))
-    # print(f"{list(np.round(score_distribution, 4))}")
+    pct = 100 - 5 / len(unique_ids)
+    max_scalar = max(np.percentile(pos_scores, pct), 1e-6)
+    pos_scores = combine_max_avg(pos_scores_avg, pos_scores_max, pos_ids, unique_ids)
     if neg_scores is not None:
         neg_scores = np.mean(neg_scores, axis=0)
-        best_param = choose_best_param(pos_scores, neg_scores, unique_objs, pos_ids)
+        best_param = choose_best_param(pos_scores, neg_scores, unique_ids, pos_ids)
         scores = pos_scores - neg_scores * best_param
     else:
         scores = pos_scores
     retrieved_ids, scores = zip(
-        *sorted(zip(unique_objs, scores), key=lambda x: x[1], reverse=True)
+        *sorted(zip(unique_ids, scores), key=lambda x: x[1], reverse=True)
     )
     retrieved_ids = retrieved_ids[:k]
     scores = scores[:k]
-    scores = (np.array(scores) - min_scalar) / (max_scalar - min_scalar)
+    # relative rank
+    scores = [1 / np.log2(i + 2) if s > 0 else 0 for i, s in enumerate(scores)]
+    scores = np.array(scores)
+    # print(f"[DEBUG] min_scalar: {min_scalar:.4f}, max_scalar: {max_scalar:.4f}")
+    score_distribution = np.percentile(scores, np.arange(0, 101, 10))
+    print(f"[DEBUG] scores: {list(np.round(score_distribution, 4))}")
+    # scores = (np.array(scores) - min_scalar) / (max_scalar - min_scalar)
     return retrieved_ids, scores
 
 
@@ -209,10 +198,11 @@ def calculate_reformulate_impact(
     for i, query in enumerate(retrieved_info.query_list):
         if query in query_list:
             reformulated_query_positions.append(i)
-            bm25_pos_scores_new.append(bm25_pos_scores[i])
-            hnsw_pos_scores_new.append(hnsw_pos_scores[i])
         else:
             other_query_positions.append(i)
+            bm25_pos_scores_new.append(bm25_pos_scores[i])
+            hnsw_pos_scores_new.append(hnsw_pos_scores[i])
+    print(f"[DEBUG] other query positions: {other_query_positions}")
     # get agg results without reformulated queries
     bm25_agg_ids, bm25_agg_scores = agg_results(
         retrieved_info.bm25_unique_ids,
@@ -231,6 +221,7 @@ def calculate_reformulate_impact(
     )
     hnsw_objs = [corpus[i] for i in hnsw_agg_ids]
     impact_score = 0
+    print(f"[DEBUG] cur_iter_pos_objs: {cur_iter_pos_objs}")
     for obj in cur_iter_pos_objs:
         # obj is retrieved due to the reformulated queries
         if obj not in bm25_objs and obj not in hnsw_objs:

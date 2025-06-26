@@ -1,5 +1,6 @@
 import sqlite3
 import re
+import numpy as np
 
 
 def execute_sql(sql: str, db: str) -> list:
@@ -53,3 +54,18 @@ def parse_response(ans, pattern):
         response = match.group(1).strip()
         return response
     return "unknown"
+
+
+def cal_ndcg(sorted_ids, pos_ids) -> float:
+    if len(sorted_ids) == 0:
+        return 0
+    if len(pos_ids) == 0:
+        return 0
+    dcg = 0
+    for i, id in enumerate(sorted_ids):
+        if id in pos_ids:
+            dcg += 1 / np.log2(i + 2)
+    idcg = 0
+    for i, id in enumerate(pos_ids):
+        idcg += 1 / np.log2(i + 2)
+    return dcg / idcg

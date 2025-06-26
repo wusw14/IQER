@@ -6,7 +6,7 @@ from constants import REFORMULATE_THRESHOLD
 
 
 @ppl
-def gen_reformulate(cond: str, col: str, value: list, history: list = []):
+def gen_reformulate_old(cond: str, col: str, value: list, history: list = []):
     SystemMessage(
         "You are a data expert skilled in semantic interpretation, pattern matching, and generating diverse values for database systems."
     )
@@ -19,15 +19,21 @@ def gen_reformulate(cond: str, col: str, value: list, history: list = []):
         "Avoid predictable sequences, repetition, or trivial rewording."
     "If no additional values can be generated without repeating or violating the above criteria, respond with None."
 
-    # "## Example"
-    # "Original Condition: Country in Southeast Asia"
-    # "Column: country"
-    # "Sample Values: ['China', 'India', 'Japan', 'Canada', 'France']"
-    # "Output:"
-    # # "<thought>The condition requires countries geographically located in Southeast Asia. The sample values show full official names of sovereign nations in title case. Only true Southeast Asian countries should be included, formatted consistently.</thought>"
-    # "<answer>Brunei | Cambodia | Indonesia | Laos | Malaysia | Myanmar | Philippines | Singapore | Thailand | Vietnam</answer>"
+    "## Example"
+    "Original Condition: Country in Southeast Asia"
+    "Column: country"
+    "Sample Values: ['China', 'India', 'Japan', 'Canada', 'France']"
+    "Output:"
+    "<thought>The condition requires countries geographically located in Southeast Asia. The sample values show full official names of sovereign nations in title case. Only true Southeast Asian countries should be included, formatted consistently.</thought>"
+    "<answer>Brunei | Cambodia | Indonesia | Laos | Malaysia | Myanmar | Philippines | Singapore | Thailand | Vietnam</answer>"
+    # "Brunei | Cambodia | Indonesia | Laos | Malaysia | Myanmar | Philippines | Singapore | Thailand | Vietnam"
 
-    "\nPlease analyze the following condition and generate 2-5 diversified values that strictly satisfy the condition. The generated values should be separated by ' | '. If no more values can be generated, respond with 'None'. You only need to output the generated values, without any other text."
+    "\nPlease analyze the following condition and generate 2-5 diversified values that strictly satisfy the condition. The generated values should be separated by ' | '. If no more values can be generated, respond with 'None'."  # You only need to output the generated values, without any other text."
+    # "\nPlease analyze the following condition and generate 2-5 diversified values that strictly satisfy the condition. The generated values should be separated by ' | '. If no more values can be generated, respond with 'None'."
+    # "The output format should be as follows:"
+    # "<thought>Analyze the semantic intent of the condition, the formatting rules implied by the sample values, and ensure diversity among the values.</thought>"
+    # "<answer>Generated diversified values separated by ' | ', or 'None' if no more values can be generated.</answer>"
+
     "Condition: " + cond
     "Column: " + col
     f"Sample Values: {value}"
@@ -38,9 +44,45 @@ def gen_reformulate(cond: str, col: str, value: list, history: list = []):
         "Please generate additional values that are distinct from the previously generated ones while still satisfying the condition."
 
     "Output:"
-    # "<thought>Analyze the semantic intent of the condition, the formatting rules implied by the sample values, and ensure diversity among the values.</thought>"
-    # "<answer>Generated diversified values separated by ' | ', or 'None' if no more values can be generated.</answer>"
+    "<thought>Analyze the semantic intent of the condition, the formatting rules implied by the sample values, and ensure diversity among the values.</thought>"
+    "<answer>Generated diversified values separated by ' | ', or 'None' if no more values can be generated.</answer>"
+    # "Please generate your response for this case in the above output format."
 
+    return gen()
+
+
+@ppl
+def gen_reformulate(cond: str, col: str, value: list, history: list = []):
+    SystemMessage(
+        "You are an expert database assistant specializing in query expansion and semantic matching."
+    )
+
+    "Your task is to generate semantically related search terms based on:"
+    with NumberedList():
+        "A user's query input (which may contain synonyms, partial matches, or hierarchical concepts)"
+        "A list of sample values from a database column (to maintain format consistency)"
+
+    "Instructions:"
+    with NumberedList():
+        "Analyze the query's core concept and identify:"
+        with DashList(indent=2):
+            "Conceptual synonyms and alternative terminology"
+            "Narrower terms (more specific instances/subtypes)"
+        "Use the example values as format references to maintain consistency with database conventions"
+        "Generate 2-10 expanded and diversified search terms"
+        "Exclude exact duplicates of the original query term and historical generated values if any"
+        "Prioritize terms that would actually appear in database records"
+
+    "Input:"
+    "Original Query Term: " + cond
+    "Column: " + col
+    f"Sample Values: {value}"
+    if len(history) > 0:
+        "Previously Generated Values:"
+        for h in history:
+            f"{h}"
+
+    "Output: please directly output the generated search terms separated by ' | ' without any other text. If no more terms can be generated, respond with 'None'."
     return gen()
 
 
@@ -67,7 +109,7 @@ def reformulate(cond: str, col: str, value: list, history: list = []) -> str:
     values = str(ans).split("|")
     if "None" in values:
         return []
-    values = [v.strip() for v in values]
+    values = [v.split("\n")[0].strip() for v in values if len(v.strip()) > 0]
     return values
 
 

@@ -4,6 +4,8 @@ import numpy as np
 import json
 import sys
 import time
+import re
+from utils import cal_ndcg
 
 
 def print_case(corpus, query, pred, gt, rec):
@@ -50,8 +52,10 @@ if __name__ == "__main__":
     k_list = []
     time_list = []
     retrieve_recall_list = []
+    ndcg_list = []
     # for d in gt_data:
     cnt = 0
+    allowed_chars = r"a-zA-Z0-9 \+\-\&_\.\(\)"
     for d in result_data:
         if limit is not None and cnt >= limit:
             break
@@ -76,6 +80,9 @@ if __name__ == "__main__":
             if score > 0:
                 pred.append(p)
         if len(pred) == 0:
+            pred = pred_org
+        # pred = pred_org
+        if len(pred) == 0:
             precision, recall, f1 = 0, 0, 0
         else:
             if type(gt[0]) == str and type(pred[0]) == int:
@@ -83,28 +90,37 @@ if __name__ == "__main__":
                 retrieved = [corpus[i] for i in retrieved]
             elif type(gt[0]) == int and type(pred[0]) == str:
                 gt = [corpus[i] for i in gt]
+            gt = [re.sub(allowed_chars, " ", s) for s in gt]
+            pred = [re.sub(allowed_chars, " ", s) for s in pred]
+            retrieved = [re.sub(allowed_chars, " ", s) for s in retrieved]
             # calculate precision, recall, f1
             tp = len(set(pred) & set(gt))
             precision = tp / len(pred)
             recall = tp / len(gt)
             f1 = 2 * precision * recall / max(precision + recall, 1e-6)
         retrieve_recall = len(set(retrieved) & set(gt)) / len(gt)
+        ndcg = cal_ndcg(retrieved, gt)
         retrieve_recall_list.append(retrieve_recall)
-        print(f"Query: {query}")
-        print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
-        print(f"Retrieved Recall: {retrieve_recall:.4f}")
-        print(f"Pred: {pred}")
-        print(f"GT: {gt}")
-        print("==========================")
+        ndcg_list.append(ndcg)
+        if retrieve_recall < 1:
+            print(f"Query: {query}")
+            print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
+            print(f"Retrieved Recall: {retrieve_recall:.4f}")
+            print(f"NDCG: {ndcg:.4f}")
+            print(f"Pred: {pred}")
+            print(f"GT: {gt}")
+            print("==========================")
         pre_list.append(precision)
         rec_list.append(recall)
         f1_list.append(f1)
     avg_pre = np.mean(pre_list) * 100
     avg_rec = np.mean(rec_list) * 100
     avg_f1 = 2 * avg_pre * avg_rec / max(avg_pre + avg_rec, 1e-6)
+    avg_ndcg = np.mean(ndcg_list) * 100
     print(f"pre: {avg_pre:.2f}")
     print(f"rec: {avg_rec:.2f}")
     print(f"f1: {avg_f1:.2f}")
     print(f"Average_k: {np.mean(k_list):.2f}")
     print(f"Average_retrieve_recall: {np.mean(retrieve_recall_list) * 100:.2f}")
+    print(f"Average_ndcg: {avg_ndcg:.2f}")
     print(f"Average_time: {np.mean(time_list):.2f}")

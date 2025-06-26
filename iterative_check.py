@@ -4,17 +4,20 @@ import numpy as np
 from constants import ALPHA, NEW_POS_RATIO
 from llm_check import llm_check
 from retrieve import RetrievedInfo
+from query import Query
+from utils import cal_ndcg
 
 
 def iterative_check_retrieved_objs(
-    query: str,
+    query: Query,
     retrieved_info: RetrievedInfo,
     args,
     checked_obj_dict: dict[str, int],
     step: int,
 ):
+    best_alpha = 0.5
     if args.index_combine_method == "weighted":
-        cur_iter_pos_objs, checked_obj_dict = weighted_combine_check_objs(
+        cur_iter_pos_objs, checked_obj_dict, best_alpha = weighted_combine_check_objs(
             query, retrieved_info, args, checked_obj_dict, step
         )
     elif args.index_combine_method == "merge":
@@ -23,7 +26,7 @@ def iterative_check_retrieved_objs(
         )
     else:
         raise ValueError(f"Invalid method: {args.method}")
-    return cur_iter_pos_objs, checked_obj_dict
+    return cur_iter_pos_objs, checked_obj_dict, best_alpha
 
 
 def update_checked_obj_dict(
@@ -45,18 +48,18 @@ def update_checked_obj_dict(
 
 
 def weighted_combine_check_objs(
-    query: str,
+    query: Query,
     retrieved_info: RetrievedInfo,
     args,
     checked_obj_dict: dict[str, int],
     step: int,
 ):
-    sorted_objs = combine_index(retrieved_info, ALPHA)
+    sorted_objs, best_alpha = combine_index(
+        retrieved_info, query.queries_from_table, query.best_alpha
+    )
     sorted_objs = [s for s in sorted_objs if s not in checked_obj_dict]
     obj_idx = 0
-    early_stop = 0
     cur_iter_pos_objs = []
-    past_pos_num = sum(checked_obj_dict.values())
     while len(checked_obj_dict) < args.k:
         # check the next top_k objs
         objs_to_check = sorted_objs[obj_idx : obj_idx + args.top_k]
@@ -71,37 +74,14 @@ def weighted_combine_check_objs(
         obj_idx += args.top_k
         print(f"Checked objects: {objs_to_check}")
         print(f"New positive objects: {new_pos_objs}")
-        if len(new_pos_objs) == 0:
+        if len(new_pos_objs) == 0 and step < args.steps - 1:
             print(f"Step {step}: No more results found for query: {query.org_query}")
             break
-        # if (
-        #     len(cur_iter_pos_objs) >= 2
-        #     and len(cur_iter_pos_objs) >= past_pos_num * NEW_POS_RATIO
-        #     and step < args.steps - 1
-        # ):
-        #     print(f"Step {step}: {len(cur_iter_pos_objs)} results found")
-        #     break
-        # pos_num = 0
-        # for obj in objs_to_check:
-        #     if checked_obj_dict.get(obj, 0) == 1:
-        #         pos_num += 1
-        # if pos_num == 0:
-        #     if len(cur_iter_pos_objs) > 0:
-        #         print(f"Step {step}: No more results found for query: {query}")
-        #         break
-        #     else:
-        #         early_stop += 1
-        #         if early_stop >= 2 and past_pos_num > 0:
-        #             print(f"Step {step}: Early stop for query: {query}")
-        #             break
-        # else:
-        #     early_stop = 0
-        #     print(f"Step {step}: new {pos_num} results found for query: {query}")
-    return cur_iter_pos_objs, checked_obj_dict
+    return cur_iter_pos_objs, checked_obj_dict, best_alpha
 
 
 def merge_combine_check_objs(
-    query: str,
+    query: Query,
     retrieved_info: RetrievedInfo,
     args,
     checked_obj_dict: dict[str, int],
@@ -172,7 +152,8 @@ def merge_combine_check_objs(
 
 def combine_index(
     retrieved_info: RetrievedInfo,
-    alpha: float,
+    pos_objs: list[str],
+    last_best_alpha: float,
 ) -> list[int]:
     """
     Combine the BM25 and HNSW indices
@@ -181,14 +162,42 @@ def combine_index(
     hnsw_objs = retrieved_info.hnsw_objs
     bm25_scores = retrieved_info.bm25_agg_scores
     hnsw_scores = retrieved_info.hnsw_agg_scores
+    # search best alpha for combine based on NDCG
+    best_alpha = 0.5
+    best_ndcg = 0
+    for alpha in np.arange(0, 1.1, 0.1):
+        if len(pos_objs) == 0:
+            break
+        obj_scores = defaultdict(float)
+        for i, bm25_score in enumerate(bm25_scores):
+            obj_scores[bm25_objs[i]] = bm25_score * alpha
+        for i, hnsw_score in enumerate(hnsw_scores):
+            obj_scores[hnsw_objs[i]] += hnsw_score * (1 - alpha)
+        obj_scores = sorted(obj_scores.items(), key=lambda x: x[1], reverse=True)
+        sorted_objs = [x[0] for x in obj_scores][:100]
+        ndcg = cal_ndcg(sorted_objs, pos_objs)
+        if ndcg > best_ndcg or (
+            ndcg == best_ndcg and abs(alpha - 0.5) < abs(best_alpha - 0.5)
+        ):
+            best_ndcg = ndcg
+            best_alpha = alpha
+    print(f"Best alpha (alpha * bm25 + (1 - alpha) * hnsw): {best_alpha:.1f}")
+    best_alpha = (best_alpha + last_best_alpha) / 2
+    print(f"Best alpha (alpha * bm25 + (1 - alpha) * hnsw): {best_alpha:.1f}")
     obj_scores = defaultdict(float)
     for i, bm25_score in enumerate(bm25_scores):
-        obj_scores[bm25_objs[i]] = bm25_score * alpha
+        obj_scores[bm25_objs[i]] = bm25_score * best_alpha
     for i, hnsw_score in enumerate(hnsw_scores):
-        obj_scores[hnsw_objs[i]] += hnsw_score * (1 - alpha)
+        obj_scores[hnsw_objs[i]] += hnsw_score * (1 - best_alpha)
     obj_scores = sorted(obj_scores.items(), key=lambda x: x[1], reverse=True)
     sorted_objs = [x[0] for x in obj_scores]
-    return sorted_objs
+    # debug: track the source of the objs
+    bm25_objs_to_check = [o for o in sorted_objs[:100] if o in bm25_objs]
+    hnsw_objs_to_check = [o for o in sorted_objs[:100] if o in hnsw_objs]
+    print(
+        f"[DEBUG] BM25 objs to check: {len(bm25_objs_to_check)}, HNSW objs to check: {len(hnsw_objs_to_check)}"
+    )
+    return sorted_objs, best_alpha
 
 
 def score_index(

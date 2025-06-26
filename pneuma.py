@@ -2,17 +2,14 @@ import argparse
 import pandas as pd
 import json
 import os
-from parsing import parse_query
-from copy import deepcopy
-from utils import execute_sql
 from load_data import load_data
-import sqlite3
-from llm_check import llm_check, llm_check_batch
 import time
-from reformulate import reformulate, refine_query
-from retrieve import retrieve_corpus
+from reformulate import reformulate, score_query
+from retrieve import retrieve_corpus, calculate_reformulate_impact
+from iterative_check import iterative_check_retrieved_objs
+from query import Query
 import numpy as np
-from collections import defaultdict
+from index import BM25Index, HNSWIndex
 
 
 def parse_args():
@@ -23,7 +20,7 @@ def parse_args():
     parser.add_argument("--method", type=str, default="llm_check")
     parser.add_argument("--k", type=int, default=100)
     parser.add_argument("--top_k", type=int, default=10)
-    parser.add_argument("--steps", type=int, default=5)
+    parser.add_argument("--steps", type=int, default=1)
     parser.add_argument("--alpha", type=float, default=10)
     parser.add_argument(
         "--index_combine_method",
@@ -35,162 +32,77 @@ def parse_args():
     return parser.parse_args()
 
 
-def combine_index(bm25_results, hnsw_results, args):
-    item_scores = defaultdict(float)
-    for bm_loc, bm_result in enumerate(bm25_results):
-        item_scores[bm_result] = 1 / np.log2(bm_loc / args.alpha + 2)
-    for hnsw_loc, hnsw_result in enumerate(hnsw_results):
-        item_scores[hnsw_result] += 1 / np.log2(hnsw_loc / args.alpha + 2)
-    results = sorted(item_scores, key=lambda x: item_scores[x], reverse=True)
-    results = results[: args.top_k]
-    bm25_results_tobe_checked, hnsw_results_tobe_checked = [], []
-    for item in results:
-        if item in bm25_results:
-            bm25_results_tobe_checked.append(item)
-        if item in hnsw_results:
-            hnsw_results_tobe_checked.append(item)
-    return results, bm25_results_tobe_checked, hnsw_results_tobe_checked
-
-
-def warm_up(
-    query: str,
-    corpus: list,
-    args,
-    llm_template: str,
-    reformat_template: str,
-    attribute: str,
-    col_vals: dict,
-) -> list:
-    print("======Warm-up=======")
-    query_list = [query]
-    print(f"Query: {query_list}")
-    bm25_results, hnsw_results = retrieve_corpus(query_list, corpus, args)
-    checked_results = {}
-    # score the intersection of the results
-    results, bm25_results, hnsw_results = combine_index(
-        bm25_results, hnsw_results, args
-    )
-    print(f"Candidates: {results}")
-    for result in results:
-        checked_results[result] = 0
-    # let LLM check the results
-    filtered_results = llm_check(query, results, llm_template)
-    print(f"Filtered: {filtered_results}")
-    for result in filtered_results:
-        checked_results[result] = 1
-    # TODO: test the impact of query reformulation
-    query_list_generated = reformulate(
-        reformat_template.format(query=query), attribute, col_vals[attribute]
-    )
-    if "unknown" in query_list_generated:
-        query_list_generated = []
-    query_list = list(set(query_list_generated + filtered_results))
-    query_list = refine_query(reformat_template.format(query=query), query_list)
-    if query not in query_list and query.lower() not in query_list:
-        query_list.append(query)
-    reformuation = True
-    # if len(filtered_results) == 0 or (
-    #     len(filtered_results) == 1 and (filtered_results[0]).lower() == query.lower()
-    # ):
-    #     reformuation = True
-    #     # reformulate the query
-    #     query_list = reformulate(
-    #         reformat_template.format(query=query), attribute, col_vals[attribute]
-    #     )
-    #     if "unknown" in query_list:
-    #         query_list = [query]
-    #     else:
-    #         for q in query_list:
-    #             checked_results[q] = 0
-    #         # refine the query list
-    #         query_list = refine_query(reformat_template.format(query=query), query_list)
-    #         for q in query_list:
-    #             checked_results[q] = 1
-    # else:
-    #     reformuation = False
-    #     query_list = list(set(filtered_results + query_list))
-    return query_list, checked_results, reformuation
-
-
-def score_index(bm25_results, hnsw_results, checked_results):
-    if len(checked_results) == 0:
-        return 0, 0
-    # calculate NDCG for bm25 and hnsw
-    bm25_ndcg, hnsw_ndcg = 0, 0
-    for k, v in checked_results.items():
-        if v == 1:
-            if k in bm25_results:
-                bm25_ndcg += 1 / np.log2(bm25_results.index(k) + 2)
-            if k in hnsw_results:
-                hnsw_ndcg += 1 / np.log2(hnsw_results.index(k) + 2)
-    return bm25_ndcg, hnsw_ndcg
-
-
-def update_checked_results(checked_results, objs_to_check, filtered_objs):
-    for obj in objs_to_check:
-        if obj in checked_results:
-            continue
-        if obj in filtered_objs:
-            checked_results[obj] = 1
-        else:
-            checked_results[obj] = 0
-    return checked_results
+def get_sample_values(
+    checked_obj_dict: dict[str, int], args, attribute: str
+) -> list[str]:
+    """
+    Get the sample values based on the checked objects
+    """
+    if len(checked_obj_dict) == 0:
+        temp_data = json.load(open(f"{args.path}/{args.dataset}_sample_values.json"))
+        samples = temp_data[attribute]
+    else:
+        pos_objs = [k for k, v in checked_obj_dict.items() if v == 1]
+        neg_objs = [k for k, v in checked_obj_dict.items() if v == 0]
+        if len(neg_objs) > 5:
+            neg_objs = np.random.choice(neg_objs, 5, replace=False)
+        samples = list(pos_objs) + list(neg_objs)
+    return samples
 
 
 def solve_query(
-    query: str,
+    query: Query,
     attribute: str,
     corpus: list,
     args,
-    path: str,
-    reformat_template: str,
-    llm_template: str,
     answers: list,
 ) -> dict:
     answers = [a.lower() for a in answers]
-    # Step 1: load sample values, which are pre-selected
-    table = args.dataset
-    col_vals = json.load(open(f"{path}/{table}_sample_values.json"))
-    # Step 2: warm-up the querying process by enriching the query
+    # Step 1: Initialization
+    reformulate_time, refine_time, retrieve_time, check_time = 0, 0, 0, 0
+    checked_obj_dict = {}
+    print(f"\n\n\n======Processing Query: [{query.org_query}]=======")
+    # Step 2: Iteratively refine the query and retrieve the cell values
+    query_list = [query.org_query]
+    neg_list = []
+    bm25_index = BM25Index(corpus, args.dataset)
+    hnsw_index = HNSWIndex(corpus, args.dataset)
+
     start_time = time.time()
-    query_list = [query]
-    checked_results = {}
-    if_reformuation = False
-    warm_up_time = time.time() - start_time
-    print(f"Query list: {query_list}")
-    retrieved_info = retrieve_corpus(query_list, corpus, args)
-    bm25_results = retrieved_info.bm25_objs
-    bm25_scores = retrieved_info.bm25_scores
-    hnsw_results = retrieved_info.hnsw_objs
-    hnsw_scores = retrieved_info.hnsw_scores
-    # aggregate scores from two indices
-    obj_scores = defaultdict(float)
-    for bm_obj, bm_score in zip(bm25_results, bm25_scores):
-        obj_scores[bm_obj] += bm_score * args.alpha
-    for hnsw_obj, hnsw_score in zip(hnsw_results, hnsw_scores):
-        obj_scores[hnsw_obj] += hnsw_score * (1 - args.alpha)
-    # sort the objects by scores
-    sorted_obj_score = sorted(obj_scores.items(), key=lambda x: x[1], reverse=True)
-    # get top k objects
-    sorted_objs = [obj for obj, _ in sorted_obj_score]
-    idx = 0
-    while len(checked_results) < args.k:
-        objs_to_check = sorted_objs[idx : idx + args.top_k]
-        filtered_objs = llm_check(query, objs_to_check, llm_template, checked_results)
-        checked_results = update_checked_results(
-            checked_results, objs_to_check, filtered_objs
-        )
-        idx += args.top_k
-    checked_objs = list(checked_results.keys())
-    results = []
-    for k, v in checked_results.items():
-        if v == 1:
-            results.append(k)
+    retrieved_info = retrieve_corpus(
+        query_list,
+        corpus,
+        args,
+        bm25_index,
+        hnsw_index,
+        neg_list,
+        query.queries_from_table,
+    )
+    retrieve_time += time.time() - start_time
+    print(f"Time for retrieving: {time.time() - start_time:.4f}s")
+    # iteratively examine the retrieved objs
+    start_time = time.time()
+    cur_iter_pos_objs, checked_obj_dict = iterative_check_retrieved_objs(
+        query,
+        retrieved_info,
+        args,
+        checked_obj_dict,
+        0,
+    )
+    check_time += time.time() - start_time
+    query.update_queries_from_table(cur_iter_pos_objs, corpus)
+
     return {
-        "query": query,
-        "pred": results,
-        "retrieved": checked_objs,
-        "retrieved_num": len(checked_objs),
+        "query": query.org_query,
+        "pred": query.queries_from_table,
+        "retrieved": list(checked_obj_dict.keys()),
+        "retrieved_num": len(checked_obj_dict),
+        "reformulate_time": reformulate_time,
+        "refine_time": refine_time,
+        "retrieve_time": retrieve_time,
+        "check_time": check_time,
+        "iteration_num": 1,
+        "query_scores": query.query_scores,
     }
 
 
@@ -205,7 +117,9 @@ if __name__ == "__main__":
 
     args.output_dir = f"results/{args.exp_name}"
     os.makedirs(args.output_dir, exist_ok=True)
-    output_path = os.path.join(args.output_dir, f"{args.dataset}_{args.alpha}.json")
+    output_path = os.path.join(
+        args.output_dir, f"{args.dataset}_{args.index_combine_method}.json"
+    )
     # load results
     if os.path.exists(output_path) and args.exp_name != "debug":
         results = json.load(open(output_path, "r"))
@@ -216,6 +130,7 @@ if __name__ == "__main__":
         processed_queries = []
     # load data
     df, query_answer, query_template, path = load_data(args.dataset)
+    args.path = path
     # TODO: rename the variables
     if args.dataset == "paper":
         batch_size = 1024
@@ -247,28 +162,23 @@ if __name__ == "__main__":
         f"Total queries: {len(query_answer)}, processed queries: {len(processed_queries)}"
     )
     cnt = 0
+    time_list = []
     for query, answers in query_answer.items():
         if query in processed_queries:
             continue
         if len(answers) == 0:
             continue
         start_time = time.time()
-        result = solve_query(
-            query,
-            attribute,
-            corpus,
-            args,
-            path,
-            reformat_template,
-            llm_template,
-            answers,
-        )
+        query = Query(query, reformat_template)
+        result = solve_query(query, attribute, corpus, args, answers)
         result["answers"] = answers
         result["time"] = time.time() - start_time
         results.append(result)
         save_results(results, output_path)
         cnt += 1
-        if args.exp_name == "debug" and cnt >= 5:
+        time_list.append(result["time"])
+        if args.exp_name == "debug" and cnt >= 10:
             break
     # save results
     save_results(results, output_path)
+    print(f"Avg time: {np.mean(time_list):.4f}s")

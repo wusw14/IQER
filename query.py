@@ -16,8 +16,10 @@ class Query:
         self.query_list = [org_query]
         self.pos_ids = []
         self.last_query_list = []
+        self.best_alpha = 0.5
+        self.best_beta = 0.5
 
-    def select_diversified_query_words(self, emb_model):
+    def select_diversified_query_words(self, emb_model, checked_obj_dict: dict):
         query_list = []
         # keep the query words with score > 1
         target_query_num = 0
@@ -30,19 +32,30 @@ class Query:
                 ):
                     target_query_num += 1
         target_query_num = min(2 * target_query_num, len(query_list) - 1)
-        embs = emb_model.encode(query_list)
-        # normalize the query embs
-        embs = embs / np.linalg.norm(embs, axis=1, keepdims=True)
-        sim_matrix = np.dot(embs, embs.T)
+        print(f"Target query number: {target_query_num}")
+        selected_query_list = [self.org_query]
+        if target_query_num == 0:
+            self.query_list = selected_query_list
+            return selected_query_list
+        pos_embs = emb_model.encode(query_list)
+        # normalize the pos embs
+        pos_embs = pos_embs / np.linalg.norm(pos_embs, axis=1, keepdims=True)
+        sim_matrix = np.dot(pos_embs, pos_embs.T)
         threshold = np.median(sim_matrix)
         print(f"Threshold: {threshold}")
         sim_dist = np.round(np.percentile(sim_matrix, list(range(0, 100, 10))), 4)
         print(f"Distribution of similarity scores: {list(sim_dist)}")
+        # neg_list = [k for k, v in checked_obj_dict.items() if v == 0]
+        # neg_embs = emb_model.encode(neg_list)
+        # # normalize the neg embs
+        # neg_embs = neg_embs / np.linalg.norm(neg_embs, axis=1, keepdims=True)
+        # sim_matrix_neg = np.dot(pos_embs, neg_embs.T)  # [N, M]
+        # sim_neg = np.max(sim_matrix_neg, axis=1)  # [N]
+        # print(f"[DEBUG] sim_neg: {list(np.round(sim_neg, 4))}")
         # select the diversified query words from the query list
-        selected_query_list = [self.org_query]
         qid = query_list.index(self.org_query)
+        # sim_scores = np.maximum(sim_matrix[qid], sim_neg)
         sim_scores = sim_matrix[qid]
-        print(f"Target query number: {target_query_num}")
         for i in range(target_query_num):
             # select the word with the least similarity score
             qid = np.argmin(sim_scores)
