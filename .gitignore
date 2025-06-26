@@ -12,3 +12,4 @@ index
 *.pyz
 *.pywz
 tmp.*
+__pycache__
