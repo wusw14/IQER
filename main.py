@@ -1,5 +1,4 @@
 import argparse
-import pandas as pd
 import json
 import os
 from load_data import load_data
@@ -60,14 +59,21 @@ def solve_query(
     answers = [a.lower() for a in answers]
     # Step 1: Initialization
     reformulate_time, refine_time, retrieve_time, check_time = 0, 0, 0, 0
+    reformulate_impact_time = 0
     checked_obj_dict = {}
     reformulate_impact = 0
     print(f"\n\n\n======Processing Query: [{query.org_query}]=======")
     # Step 2: Iteratively refine the query and retrieve the cell values
     query_list = [query.org_query]
     neg_list = []
+    start_time = time.time()
     bm25_index = BM25Index(corpus, args.dataset)
+    print(f"Time for loading BM25 index: {time.time() - start_time:.4f}s")
+    load_index_time = time.time() - start_time
+    start_time = time.time()
     hnsw_index = HNSWIndex(corpus, args.dataset)
+    print(f"Time for loading HNSW index: {time.time() - start_time:.4f}s")
+    load_index_time += time.time() - start_time
     for step in range(args.steps):
         cur_generated_query_list = []
 
@@ -91,11 +97,15 @@ def solve_query(
         print(f"Reformulated query: {cur_generated_query_list}")
         reformulate_time += time.time() - start_time
         print(f"Time for reformulating: {time.time() - start_time:.4f}s")
+
         # score and select the diversified query words from the query list
         start_time = time.time()
         new_query_objs = query.new_queries_from_generated + query.new_queries_from_table
         if len(new_query_objs) > 0:
-            query_scores_new = score_query(query.query_condition, new_query_objs)
+            query_scores_new = score_query(
+                query.query_condition, new_query_objs, checked_obj_dict
+            )
+            # query_scores_new = {q: 2 for q in new_query_objs}
             query.update_query_scores(query_scores_new)
             # select the diversified query words from the query list
             query_list = query.select_diversified_query_words(
@@ -113,8 +123,8 @@ def solve_query(
         print(f"Time for refining: {time.time() - start_time:.4f}s")
 
         # retrieve the corpus based on the query list
+        start_time = time.time()
         if query.last_query_list != query_list:
-            start_time = time.time()
             retrieved_info = retrieve_corpus(
                 query_list,
                 corpus,
@@ -124,9 +134,9 @@ def solve_query(
                 neg_list,
                 query.pos_ids,
             )
-            retrieve_time += time.time() - start_time
             query.last_query_list = query_list
-            print(f"Time for retrieving: {time.time() - start_time:.4f}s")
+        retrieve_time += time.time() - start_time
+        print(f"Time for retrieving: {time.time() - start_time:.4f}s")
         # iteratively examine the retrieved objs
         start_time = time.time()
         cur_iter_pos_objs, checked_obj_dict, best_alpha = (
@@ -143,6 +153,7 @@ def solve_query(
         query.update_queries_from_table(cur_iter_pos_objs, corpus)
         if len(cur_iter_pos_objs) == 0 and step > 0 and len(checked_obj_dict) >= args.k:
             break
+        start_time = time.time()
         reformulate_impact = calculate_reformulate_impact(
             query.new_queries_from_generated,
             retrieved_info,
@@ -152,24 +163,31 @@ def solve_query(
             query.pos_ids,
         )
         print(f"Reformulate impact: {reformulate_impact}")
-
+        reformulate_impact_time += time.time() - start_time
     if len(query.new_queries_from_table) > 0:
+        start_time = time.time()
         query_scores_new = score_query(
-            query.query_condition, query.new_queries_from_table
+            query.query_condition,
+            query.new_queries_from_table,
+            checked_obj_dict,
         )
+        # query_scores_new = {q: 2 for q in query.new_queries_from_table}
         query.update_query_scores(query_scores_new)
+        refine_time += time.time() - start_time
 
     return {
         "query": query.org_query,
         "pred": query.queries_from_table,
         "retrieved": list(checked_obj_dict.keys()),
         "retrieved_num": len(checked_obj_dict),
+        "query_scores": query.query_scores,
         "reformulate_time": reformulate_time,
         "refine_time": refine_time,
         "retrieve_time": retrieve_time,
         "check_time": check_time,
         "iteration_num": step + 1,
-        "query_scores": query.query_scores,
+        "load_index_time": load_index_time,
+        "reformulate_impact_time": reformulate_impact_time,
     }
 
 

@@ -1,7 +1,7 @@
 from collections import defaultdict
 
 import numpy as np
-from constants import ALPHA, NEW_POS_RATIO
+from constants import NEW_POS_RATIO
 from llm_check import llm_check
 from retrieve import RetrievedInfo
 from query import Query
@@ -65,7 +65,7 @@ def weighted_combine_check_objs(
         objs_to_check = sorted_objs[obj_idx : obj_idx + args.top_k]
         objs_to_check = objs_to_check[: args.k - len(checked_obj_dict)]
         new_pos_objs = llm_check(
-            query.org_query, objs_to_check, args.llm_template, checked_obj_dict
+            query.org_query, objs_to_check, args.llm_template, checked_obj_dict, 1
         )
         cur_iter_pos_objs.extend(new_pos_objs)
         checked_obj_dict = update_checked_obj_dict(

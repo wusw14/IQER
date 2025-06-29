@@ -82,7 +82,7 @@ def solve_query(
     print(f"Time for retrieving: {time.time() - start_time:.4f}s")
     # iteratively examine the retrieved objs
     start_time = time.time()
-    cur_iter_pos_objs, checked_obj_dict = iterative_check_retrieved_objs(
+    cur_iter_pos_objs, checked_obj_dict, best_alpha = iterative_check_retrieved_objs(
         query,
         retrieved_info,
         args,

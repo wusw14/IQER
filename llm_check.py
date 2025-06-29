@@ -3,7 +3,8 @@ from typing import List
 from concurrent.futures import ThreadPoolExecutor
 from appl import ppl, gen, SystemMessage, convo, records, SystemRole
 from appl.compositor import Tagged, NumberedList, DashList
-from reformulate import refine_query
+
+# from reformulate import refine_query
 
 client = openai.OpenAI(
     base_url="http://localhost:1117/v1",  # vLLM server address
@@ -25,7 +26,9 @@ def process_single_prompt(cond: str, col: str, val: str) -> str:
     return content
 
 
-def llm_check(query: str, corpus: list, template: str, checked_results={}) -> list:
+def llm_check(
+    query: str, corpus: list, template: str, checked_results={}, max_tokens=1024
+) -> list:
     prompts = []
     corpus_new = []
     corpus = list(set(corpus))
@@ -38,7 +41,7 @@ def llm_check(query: str, corpus: list, template: str, checked_results={}) -> li
         prompts.append(prompt)
     if len(prompts) == 0:
         return []
-    results = run_inference(client, model_path, prompts, max_tokens=5)
+    results = run_inference(prompts, max_tokens)
     filtered_vals = []
     for val, result in zip(corpus_new, results):
         if result.strip().lower().startswith("yes"):
@@ -46,40 +49,13 @@ def llm_check(query: str, corpus: list, template: str, checked_results={}) -> li
     return filtered_vals
 
 
-def llm_check_batch(cond: str, unique_vals: list) -> list:
-    # split the unique_vals into batches of 20
-    batches = [unique_vals[i : i + 20] for i in range(0, len(unique_vals), 20)]
-    results = []
-    for batch in batches:
-        refined_results = refine_query(cond, batch)
-        results.extend(refined_results)
-    return results
-
-
-# def llm_check(cond: str, col: str, unique_vals: list) -> list:
-#     prompts = [process_single_prompt(cond, col, val) for val in unique_vals]
-#     results = run_inference(client, model_path, prompts, max_tokens=5)
-#     filtered_vals = []
-#     for val, result in zip(unique_vals, results):
-#         if result.strip().lower().startswith("true"):
-#             filtered_vals.append(val)
-#     return filtered_vals
-
-
 @ppl
-def appl_gen(prompt):
+def appl_gen(prompt, max_tokens=1024):
     prompt
-    return gen()
+    return gen(max_tokens=max_tokens)
 
 
-def run_inference(
-    client: openai.OpenAI,
-    model_path: str,
-    prompts: List[str],
-    max_tokens: int = 8192,
-    temperature: float = 0.0,
-    top_p: float = 0.8,
-) -> List[str]:
+def run_inference(prompts: List[str], max_tokens=1024) -> List[str]:
 
     # def generate_completion(messages):
     #     response = client.chat.completions.create(
@@ -97,10 +73,10 @@ def run_inference(
     #     return response.choices[0].message.content
 
     def generate_completion(prompt):
-        ans = appl_gen(prompt)
+        ans = appl_gen(prompt, max_tokens)
         ans = str(ans).strip()
         return ans
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=min(100, len(prompts))) as executor:
         completions = list(executor.map(generate_completion, prompts))
     return completions

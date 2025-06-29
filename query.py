@@ -31,7 +31,8 @@ class Query:
                     or q in self.new_queries_from_table
                 ):
                     target_query_num += 1
-        target_query_num = min(2 * target_query_num, len(query_list) - 1)
+        # target_query_num = min(2 * target_query_num, len(query_list) - 1)
+        target_query_num = len(query_list) - 1
         print(f"Target query number: {target_query_num}")
         selected_query_list = [self.org_query]
         if target_query_num == 0:

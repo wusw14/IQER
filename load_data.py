@@ -27,15 +27,6 @@ def load_data(dataset_name):
         folder = "../dataset/ConceptNet"
         df = pd.read_csv(f"{folder}/{dataset_name}_candidates.csv")
         df = df.drop_duplicates()
-        candidates = df.values[:, 0].tolist()
-        # filtered_gt = json.load(open(f"{folder}/{dataset_name}_filtered_gt.json"))
-        # query_answer = {}
-        # for key, values in filtered_gt.items():
-        #     answer = []
-        #     for val, _ in values:
-        #         if val in candidates and val not in answer:
-        #             answer.append(val)
-        #     query_answer[key] = answer
         query_answer = json.load(open(f"results/llm/{dataset_name}_refined.json"))
         query_answer = {x["query"]: x["answers"] for x in query_answer}
         query_template = f"Find all the {dataset_name} that are " + "{value}"

@@ -2,7 +2,6 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 from index import BM25Index, HNSWIndex
 from pydantic import BaseModel
-from query import Query
 from typing import Optional
 import time
 from utils import cal_ndcg
@@ -148,11 +147,11 @@ def agg_results(
     Aggregate BM25 results from multiple queries
     """
     pos_scores = np.array(pos_scores)
-    min_scalar = np.max(np.min(pos_scores, axis=1))
+    min_scalar = np.min(pos_scores)
     pos_scores_avg = pos_scores.mean(axis=0)
     pos_scores_max = pos_scores.max(axis=0)
-    pct = 100 - 5 / len(unique_ids)
-    max_scalar = max(np.percentile(pos_scores, pct), 1e-6)
+    # pct = 100 - 5 / len(unique_ids)
+    max_scalar = max(np.max(pos_scores), 1e-6)
     pos_scores = combine_max_avg(pos_scores_avg, pos_scores_max, pos_ids, unique_ids)
     if neg_scores is not None:
         neg_scores = np.mean(neg_scores, axis=0)
@@ -169,8 +168,8 @@ def agg_results(
     scores = [1 / np.log2(i + 2) if s > 0 else 0 for i, s in enumerate(scores)]
     scores = np.array(scores)
     # print(f"[DEBUG] min_scalar: {min_scalar:.4f}, max_scalar: {max_scalar:.4f}")
-    score_distribution = np.percentile(scores, np.arange(0, 101, 10))
-    print(f"[DEBUG] scores: {list(np.round(score_distribution, 4))}")
+    # score_distribution = np.percentile(scores, np.arange(0, 101, 10))
+    # print(f"[DEBUG] scores: {list(np.round(score_distribution, 4))}")
     # scores = (np.array(scores) - min_scalar) / (max_scalar - min_scalar)
     return retrieved_ids, scores
 
