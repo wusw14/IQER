@@ -13,3 +13,4 @@ index
 *.pywz
 tmp.*
 __pycache__
+index_dir
