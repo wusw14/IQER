@@ -1,8 +1,9 @@
 import openai
 from typing import List
 from concurrent.futures import ThreadPoolExecutor
-from appl import ppl, gen, SystemMessage, convo, records, SystemRole
-from appl.compositor import Tagged, NumberedList, DashList
+
+# from appl import ppl, gen, SystemMessage, convo, records, SystemRole
+# from appl.compositor import Tagged, NumberedList, DashList
 
 # from reformulate import refine_query
 
@@ -49,34 +50,46 @@ def llm_check(
     return filtered_vals
 
 
-@ppl
-def appl_gen(prompt, max_tokens=1024):
-    prompt
-    return gen(max_tokens=max_tokens)
+# @ppl
+# def appl_gen(prompt, max_tokens=1024):
+#     prompt
+#     return gen(max_tokens=max_tokens)
 
 
-def run_inference(prompts: List[str], max_tokens=1024) -> List[str]:
+def run_inference(
+    prompts: List[str], max_tokens=1024, system_prompts: list = None
+) -> List[str]:
 
-    # def generate_completion(messages):
-    #     response = client.chat.completions.create(
-    #         model=model_path,
-    #         messages=messages,
-    #         max_tokens=max_tokens,
-    #         temperature=temperature,
-    #         top_p=0.8,
-    #         presence_penalty=1.5,
-    #         extra_body={
-    #             "top_k": 20,
-    #             "chat_template_kwargs": {"enable_thinking": False},
-    #         },
-    #     )
-    #     return response.choices[0].message.content
+    def generate_completion(prompt, system_prompt=None):
+        messages = [
+            {"role": "user", "content": prompt},
+        ]
+        if system_prompt:
+            messages.insert(0, {"role": "system", "content": system_prompt})
+        response = client.chat.completions.create(
+            model=model_path,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=0.0,
+            top_p=0.8,
+            presence_penalty=1.5,
+            extra_body={
+                "top_k": 20,
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        )
+        return response.choices[0].message.content
 
-    def generate_completion(prompt):
-        ans = appl_gen(prompt, max_tokens)
-        ans = str(ans).strip()
-        return ans
+    # def generate_completion(prompt):
+    #     ans = appl_gen(prompt, max_tokens)
+    #     ans = str(ans).strip()
+    #     return ans
 
     with ThreadPoolExecutor(max_workers=min(100, len(prompts))) as executor:
-        completions = list(executor.map(generate_completion, prompts))
+        if system_prompts:
+            completions = list(
+                executor.map(generate_completion, prompts, system_prompts)
+            )
+        else:
+            completions = list(executor.map(generate_completion, prompts))
     return completions

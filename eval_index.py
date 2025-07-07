@@ -10,7 +10,7 @@ from index import BM25Index, HNSWIndex
 
 
 def eval_recall(queries, results, query_answer, corpus):
-    k_list = [10, 20, 50, 100, 200, 300, 400, 500, 750, 1000]
+    k_list = [10, 50, 100]
     # k_list = [20]
     rec_dict = {}
     for k in k_list:
@@ -63,9 +63,10 @@ if __name__ == "__main__":
     time_cost = (time.time() - start_time) / len(query)
     print(f"Query time per query: {time_cost:.4f} seconds")
 
-    # # eval recall
-    # eval_recall(query, results, query_answer, corpus)
+    # eval recall
+    eval_recall(query, results, query_answer, corpus)
 
+    exit()
     # threshold range
     scores = np.array(scores)
     scores = scores / np.max(scores)

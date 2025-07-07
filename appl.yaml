@@ -9,19 +9,23 @@ settings:
       tool_results: false     
 
   caching:
-    folder: "/ssddata/wushw/.appl/caches"
-
+    folder: "/ssddata/wushw/.appl/caches_qwen"
+  
+  concurrency:
+    llm_max_workers: 100 # The maximum number of workers for the llm executor
+    thread_max_workers: 100 # The maximum number of workers for the threading executor
+    process_max_workers: 100 # The maximum number of workers for the processing executor
   # tracing:
   #   enabled: true
 
 default_servers:
-  default: llama
+  default: qwen
 
 servers:
   llama:
-    model: meta-llama/Llama-3.3-70B-Instruct
+    model: meta-llama/Llama-3.1-8B-Instruct
     provider: custom
-    base_url: http://localhost:1117/v1
+    base_url: http://localhost:1115/v1
     api_key: "llama"
     max_tokens: 1024
     temperature: 0.0
@@ -42,10 +46,10 @@ servers:
     model: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
     api_key: deepseek-ai
   qwen:
-    model: Qwen/Qwen2.5-72B-Instruct
+    model: Qwen/Qwen2.5-32B-Instruct
     provider: custom
-    base_url: http://localhost:1116/v1
-    api_key: "qwen-72b"
+    base_url: http://localhost:1132/v1
+    api_key: "qwen-32b"
     max_tokens: 1024
     temperature: 0.0
   qwen3:

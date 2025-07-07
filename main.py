@@ -21,6 +21,7 @@ def parse_args():
     parser.add_argument("--top_k", type=int, default=10)
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--alpha", type=float, default=0.5)
+    parser.add_argument("--early_stop", action="store_true")
     parser.add_argument(
         "--index_combine_method",
         type=str,
@@ -55,6 +56,8 @@ def solve_query(
     corpus: list,
     args,
     answers: list,
+    bm25_index: BM25Index,
+    hnsw_index: HNSWIndex,
 ) -> dict:
     answers = [a.lower() for a in answers]
     # Step 1: Initialization
@@ -66,14 +69,7 @@ def solve_query(
     # Step 2: Iteratively refine the query and retrieve the cell values
     query_list = [query.org_query]
     neg_list = []
-    start_time = time.time()
-    bm25_index = BM25Index(corpus, args.dataset)
-    print(f"Time for loading BM25 index: {time.time() - start_time:.4f}s")
-    load_index_time = time.time() - start_time
-    start_time = time.time()
-    hnsw_index = HNSWIndex(corpus, args.dataset)
-    print(f"Time for loading HNSW index: {time.time() - start_time:.4f}s")
-    load_index_time += time.time() - start_time
+    early_stop = 0
     for step in range(args.steps):
         cur_generated_query_list = []
 
@@ -101,10 +97,9 @@ def solve_query(
         # score and select the diversified query words from the query list
         start_time = time.time()
         new_query_objs = query.new_queries_from_generated + query.new_queries_from_table
+        new_query_objs = [q for q in new_query_objs if q not in query.query_scores]
         if len(new_query_objs) > 0:
-            query_scores_new = score_query(
-                query.query_condition, new_query_objs, checked_obj_dict
-            )
+            query_scores_new = score_query(query.query_condition, new_query_objs)
             # query_scores_new = {q: 2 for q in new_query_objs}
             query.update_query_scores(query_scores_new)
             # select the diversified query words from the query list
@@ -151,8 +146,16 @@ def solve_query(
         query.best_alpha = best_alpha
         check_time += time.time() - start_time
         query.update_queries_from_table(cur_iter_pos_objs, corpus)
-        if len(cur_iter_pos_objs) == 0 and step > 0 and len(checked_obj_dict) >= args.k:
-            break
+        if (
+            len(cur_iter_pos_objs) == 0
+            and args.early_stop
+            and len(query.queries_from_table) > 0
+        ):
+            early_stop += 1
+            if early_stop >= 3:
+                break
+        else:
+            early_stop = 0
         start_time = time.time()
         reformulate_impact = calculate_reformulate_impact(
             query.new_queries_from_generated,
@@ -164,16 +167,6 @@ def solve_query(
         )
         print(f"Reformulate impact: {reformulate_impact}")
         reformulate_impact_time += time.time() - start_time
-    if len(query.new_queries_from_table) > 0:
-        start_time = time.time()
-        query_scores_new = score_query(
-            query.query_condition,
-            query.new_queries_from_table,
-            checked_obj_dict,
-        )
-        # query_scores_new = {q: 2 for q in query.new_queries_from_table}
-        query.update_query_scores(query_scores_new)
-        refine_time += time.time() - start_time
 
     return {
         "query": query.org_query,
@@ -186,7 +179,6 @@ def solve_query(
         "retrieve_time": retrieve_time,
         "check_time": check_time,
         "iteration_num": step + 1,
-        "load_index_time": load_index_time,
         "reformulate_impact_time": reformulate_impact_time,
     }
 
@@ -217,30 +209,34 @@ if __name__ == "__main__":
     df, query_answer, query_template, path = load_data(args.dataset)
     args.path = path
     # TODO: rename the variables
-    if args.dataset == "paper":
-        batch_size = 1024
-        attribute = "abstracts"
-        reformat_template = "According to the abstract, the paper is about {query}."
-        llm_template = (
-            "The abstract of the paper is: {value}. Is this paper about {query}?"
-        )
-    elif args.dataset == "product":
+    if args.dataset == "product":
         batch_size = 512
         attribute = "Product_Title"
-        reformat_template = "According to the product title, the product is the same as or a type of '{query}'."
-        llm_template = "Is '{value}' the same as or a type of '{query}'? Directly answer with 'Yes' or 'No'."
+        # reformat_template = "According to the product title, the product is the same as or a type of '{query}'."
     else:
         cols = df.columns
         batch_size = 128
         attribute = cols[0]
-        reformat_template = (
-            f"According to the {attribute} name, the {attribute}"
-            + " is the same as or a type of '{query}'."
-        )
-        llm_template = "Is '{value}' the same as or a type of '{query}'? Directly answer with 'Yes' or 'No'."
+        # reformat_template = (
+        #     f"According to the {attribute} name, the {attribute}"
+        #     + " is the same as or a type of '{query}'."
+        # )
+        # reformat_template = "The value is the same as or a type of '{query}'."
+        # llm_template = "Is '{value}' the same as or a type of '{query}'? Directly answer with 'Yes' or 'No'."
+    reformat_template = "The value is the same as or a type of '{query}'."
+    llm_template = "Is '{value}' the same as or a type of '{query}'? Directly answer with 'Yes' or 'No'."
     corpus = df[attribute].values.tolist()
 
     args.llm_template = llm_template
+
+    start_time = time.time()
+    bm25_index = BM25Index(corpus, args.dataset)
+    print(f"Time for loading BM25 index: {time.time() - start_time:.4f}s")
+    load_index_time = time.time() - start_time
+    start_time = time.time()
+    hnsw_index = HNSWIndex(corpus, args.dataset)
+    print(f"Time for loading HNSW index: {time.time() - start_time:.4f}s")
+    load_index_time += time.time() - start_time
 
     # solve query
     print(
@@ -254,7 +250,9 @@ if __name__ == "__main__":
             continue
         start_time = time.time()
         query = Query(query, reformat_template)
-        result = solve_query(query, attribute, corpus, args, answers)
+        result = solve_query(
+            query, attribute, corpus, args, answers, bm25_index, hnsw_index
+        )
         result["answers"] = answers
         result["time"] = time.time() - start_time
         results.append(result)

@@ -6,6 +6,7 @@ from llm_check import llm_check
 from retrieve import RetrievedInfo
 from query import Query
 from utils import cal_ndcg
+from reformulate import score_query
 
 
 def iterative_check_retrieved_objs(
@@ -74,9 +75,35 @@ def weighted_combine_check_objs(
         obj_idx += args.top_k
         print(f"Checked objects: {objs_to_check}")
         print(f"New positive objects: {new_pos_objs}")
-        if len(new_pos_objs) == 0 and step < args.steps - 1:
-            print(f"Step {step}: No more results found for query: {query.org_query}")
-            break
+        if len(new_pos_objs) == 0 and (
+            step < args.steps - 1
+            or args.early_stop
+            and sum(checked_obj_dict.values()) > 0
+        ):
+            if step == args.steps - 1:
+                # re-check the current iter pos objs
+                query_scores_new = score_query(query.query_condition, cur_iter_pos_objs)
+                for k, v in query_scores_new.items():
+                    if k in checked_obj_dict:
+                        checked_obj_dict[k] = v
+                query.update_query_scores(query_scores_new)
+                cur_iter_pos_objs = [k for k, v in query_scores_new.items() if v > 0]
+                if sum(checked_obj_dict.values()) > 0:
+                    print(f"Step {step}: early stop for query: {query.org_query}")
+                    break
+            else:
+                print(f"Step {step}: early stop for query: {query.org_query}")
+                break
+    # re-check the current iter pos objs
+    new_query_objs = [q for q in cur_iter_pos_objs if q not in query.query_scores]
+    query_scores_new = score_query(query.query_condition, new_query_objs)
+    for k, v in query_scores_new.items():
+        if k in checked_obj_dict:
+            checked_obj_dict[k] = v
+    query.update_query_scores(query_scores_new)
+    cur_iter_pos_objs = [
+        q for q in cur_iter_pos_objs if query.query_scores.get(q, 0) > 0
+    ]
     return cur_iter_pos_objs, checked_obj_dict, best_alpha
 
 
