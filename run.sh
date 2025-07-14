@@ -11,6 +11,20 @@
 # nohup python -u eval_lotus.py --dataset product --exp_name debug > logs/lotus/product.log 2>&1 &
 # nohup python -u eval_lotus.py --dataset chemical_compound --exp_name debug > logs/lotus/chemical.log 2>&1 &
 
-python -u main.py --dataset animal --index_combine_method weighted --exp_name our_v5 --early_stop > logs/our/animal_v5.log
-python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_v5 --early_stop > logs/our/chemical_v5.log
-python -u main.py --dataset product --index_combine_method weighted --exp_name our_v5 --early_stop > logs/our/product_v5.log
+# python -u main.py --dataset animal --index_combine_method weighted --exp_name ab_reform --steps 10 --rethink > logs/ab/animal_reform.log
+# python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name ab_reform --steps 10 --rethink > logs/ab/chemical_reform.log
+# python -u main.py --dataset product --index_combine_method weighted --exp_name ab_wo_tbval --steps 10 --rethink > logs/ab/product_wo_tbval.log
+
+# python -u main.py --dataset animal --index_combine_method weighted --exp_name tablerag_0.5_B100 --budget 100 --k 100 > logs/tablerag/animal_0.5_B100.log
+# python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name tablerag_0.5_B100 --budget 100 --k 100 > logs/tablerag/chemical_0.5_B100.log
+# python -u main.py --dataset product --index_combine_method weighted --exp_name tablerag_0.5_B100 --budget 100 --k 100 > logs/tablerag/product_0.5_B100.log
+
+# python -u main.py --dataset animal --index_combine_method weighted --exp_name tablerag_0.5_B200 --budget 200 --k 200 > logs/tablerag/animal_0.5_B200.log
+# python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name tablerag_0.5_B200 --budget 200 --k 200 > logs/tablerag/chemical_0.5_B200.log
+# python -u main.py --dataset product --index_combine_method weighted --exp_name tablerag_0.5_B200 --budget 200 --k 200 > logs/tablerag/product_0.5_B200.log
+
+
+
+python -u main.py --dataset animal --index_combine_method weighted --exp_name our_logistic --budget 500 --k 500 > logs/our_logistic/animal_v7.log
+python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_logistic --budget 500 --k 500 > logs/our_logistic/chemical_v7.log
+python -u main.py --dataset product --index_combine_method weighted --exp_name our_logistic --budget 500 --k 500 > logs/our_logistic/product_v7.log

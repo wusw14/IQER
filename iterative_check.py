@@ -9,6 +9,20 @@ from utils import cal_ndcg
 from reformulate import score_query
 
 
+def llm_check_retrieved_objs(query: Query, obj_to_check: list[str], args):
+    new_pos_objs = llm_check(query.org_query, obj_to_check, args.llm_template, {}, 1)
+    obj_scores = {}
+    for obj in obj_to_check:
+        if obj in new_pos_objs:
+            obj_scores[obj] = 1
+        else:
+            obj_scores[obj] = 0
+
+    new_query_objs = [q for q in new_pos_objs if q not in query.query_scores]
+    query_scores = score_query(query.query_condition, new_query_objs)
+    return obj_scores, query_scores
+
+
 def iterative_check_retrieved_objs(
     query: Query,
     retrieved_info: RetrievedInfo,
@@ -80,7 +94,7 @@ def weighted_combine_check_objs(
             or args.early_stop
             and sum(checked_obj_dict.values()) > 0
         ):
-            if step == args.steps - 1:
+            if step == args.steps - 1 and args.rethink:
                 # re-check the current iter pos objs
                 query_scores_new = score_query(query.query_condition, cur_iter_pos_objs)
                 for k, v in query_scores_new.items():
@@ -95,15 +109,16 @@ def weighted_combine_check_objs(
                 print(f"Step {step}: early stop for query: {query.org_query}")
                 break
     # re-check the current iter pos objs
-    new_query_objs = [q for q in cur_iter_pos_objs if q not in query.query_scores]
-    query_scores_new = score_query(query.query_condition, new_query_objs)
-    for k, v in query_scores_new.items():
-        if k in checked_obj_dict:
-            checked_obj_dict[k] = v
-    query.update_query_scores(query_scores_new)
-    cur_iter_pos_objs = [
-        q for q in cur_iter_pos_objs if query.query_scores.get(q, 0) > 0
-    ]
+    if args.rethink:
+        new_query_objs = [q for q in cur_iter_pos_objs if q not in query.query_scores]
+        query_scores_new = score_query(query.query_condition, new_query_objs)
+        for k, v in query_scores_new.items():
+            if k in checked_obj_dict:
+                checked_obj_dict[k] = v
+        query.update_query_scores(query_scores_new)
+        cur_iter_pos_objs = [
+            q for q in cur_iter_pos_objs if query.query_scores.get(q, 0) > 0
+        ]
     return cur_iter_pos_objs, checked_obj_dict, best_alpha
 
 

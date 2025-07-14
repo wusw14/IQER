@@ -1,12 +1,22 @@
 import numpy as np
 from constants import DIVERSITY_THRESHOLD
 from scipy.stats import ttest_ind
+from retrieve import RetrievedInfo
+
+
+def leave_one_out(scores: list[float]) -> float:
+    scores = sorted(scores, reverse=True)
+    for s in scores:
+        if s < 0.95:
+            return s
+    return 0.95
 
 
 class Query:
     def __init__(self, org_query: str, reformat_template: str):
         self.org_query = org_query
-        self.query_scores = {org_query: 2}
+        self.query_scores = {org_query: 2}  # store the results from rethinking
+        self.obj_scores = {}  # store the scores of the checked objects
         self.queries_from_generated = []
         self.queries_from_table = []
         self.new_queries_from_generated = []
@@ -14,12 +24,40 @@ class Query:
         self.query_condition = reformat_template.format(query=org_query)
         self.reformulate_impact = 0
         self.query_list = [org_query]
+        self.bm25_query_list = []
         self.pos_ids = []
+        self.neg_ids = []
         self.last_query_list = []
         self.best_alpha = 0.5
         self.best_beta = 0.5
+        self.id_to_obj = {}
+        self.obj_to_id = {}
+        self.obj_features = {}  # store the features of the checked objects
+        self.pred_pos_objs = []
 
-    def select_diversified_query_words(self, emb_model, checked_obj_dict: dict):
+    def select_bm25_query_words(self):
+        query_list = []
+        query_words_list = []
+        # keep the query words with score > 1
+        if np.sum(np.array(list(self.query_scores.values())) > 0) == 1:
+            thr = 0
+        else:
+            thr = 2
+        for q, s in self.query_scores.items():
+            if s >= thr:
+                words = q.split()
+                flag = True
+                for selected_q_word in query_words_list:
+                    if len(set(selected_q_word) - set(words)) == 0:
+                        flag = False
+                        break
+                if flag:
+                    query_list.append(q)
+                    query_words_list.append(words)
+        self.bm25_query_list = query_list
+        return query_list
+
+    def select_diversified_query_words(self, emb_model):
         query_list = []
         # keep the query words with score > 1
         if np.sum(np.array(list(self.query_scores.values())) > 0) == 1:
@@ -77,60 +115,91 @@ class Query:
         print(f"Select {len(selected_query_list)} from {len(query_list)}")
         return selected_query_list
 
-    def get_neg_list(self, checked_obj_dict: dict):
-        neg_list = []
-        for obj, checked in checked_obj_dict.items():
-            if not checked:
-                neg_list.append(obj)
-        # remove the common parts of each item in the neg_list
-        pos_word_set = set()
-        for q, s in self.query_scores.items():
-            if s > 1:
-                pos_word_set.update(q.split())
-        refined_neg_list = []
-        for obj in neg_list:
-            obj_words = obj.split()
-            obj_words = [word for word in obj_words if word not in pos_word_set]
-            if len(obj_words) > 0:
-                refined_neg_list.append(" ".join(obj_words))
-        if len(refined_neg_list) > 5:
-            refined_neg_list = np.random.choice(
-                refined_neg_list, 5, replace=False
-            ).tolist()
-        return refined_neg_list
-
-    def if_reformulate(self, emb_model):
-        if len(self.queries_from_table) == 0:
-            return True
-        # if there exists significant difference between the similarity scores of the query and the retrieved objects
-        # --> reformulate
-        query_emb = emb_model.encode(self.org_query)
-        table_embs = emb_model.encode(self.queries_from_table)
-        # normalize the emb
-        query_emb = query_emb / np.linalg.norm(query_emb)
-        table_embs = table_embs / np.linalg.norm(table_embs, axis=1, keepdims=True)
-        query_table_sim_scores = np.dot(query_emb, table_embs.T)
-        intra_table_sim_scores = np.dot(table_embs, table_embs.T)
-        # flat the sim scores and only keep values less than 1
-        query_table_sim_scores = query_table_sim_scores[
-            query_table_sim_scores < 1
-        ].flatten()
-        intra_table_sim_scores = intra_table_sim_scores[
-            intra_table_sim_scores < 1
-        ].flatten()
-        # calculate the t-test p-value
-        t_stat, p_value = ttest_ind(query_table_sim_scores, intra_table_sim_scores)
-        print(f"t-stat: {t_stat:.4f}, p-value: {p_value:.4f}")
-        return p_value < 0.05 and t_stat > 0
-
     def update_queries_from_generated(self, new_queries_from_generated: list):
         self.new_queries_from_generated = new_queries_from_generated
         self.queries_from_generated.extend(new_queries_from_generated)
 
-    def update_queries_from_table(self, new_queries_from_table: list, corpus: list):
+    def update_queries_from_table(self, new_queries_from_table: list):
         self.new_queries_from_table = new_queries_from_table
         self.queries_from_table.extend(new_queries_from_table)
-        self.pos_ids.extend([corpus.index(q) for q in new_queries_from_table])
 
     def update_query_scores(self, query_scores: dict):
         self.query_scores.update(query_scores)
+
+    def hnsw_leave_one_out(self, scores: list[float], obj: str) -> float:
+        if (
+            obj in self.query_list
+            and obj not in self.queries_from_generated
+            and obj != self.org_query
+        ):
+            idx = self.query_list.index(obj)
+            scores[idx] = 0
+        return np.max(scores)
+
+    def bm25_leave_one_out(self, scores: list[float], obj: str) -> float:
+        if (
+            obj in self.bm25_query_list
+            and obj not in self.queries_from_generated
+            and obj != self.org_query
+        ):
+            idx = self.bm25_query_list.index(obj)
+            scores[idx] = 0
+        return np.max(scores)
+
+    def update_obj_features(self, retrieved_info: RetrievedInfo):
+        bm25_unique_ids = retrieved_info.bm25_unique_ids
+        hnsw_unique_ids = retrieved_info.hnsw_unique_ids
+        bm25_pos_scores = retrieved_info.bm25_pos_scores
+        hnsw_pos_scores = retrieved_info.hnsw_pos_scores
+
+        for obj in self.obj_scores:
+            if obj in self.obj_features:
+                continue
+            obj_id = self.obj_to_id[obj]
+            try:
+                bm25_index = bm25_unique_ids.index(obj_id)
+                bm25_pos_score = [v[bm25_index] for v in bm25_pos_scores]
+                bm25_max_score = self.bm25_leave_one_out(bm25_pos_score, obj)
+                bm25_avg_score = np.mean(bm25_pos_score)
+            except:
+                bm25_max_score = 0
+                bm25_avg_score = 0
+            try:
+                hnsw_index = hnsw_unique_ids.index(obj_id)
+                hnsw_pos_score = [v[hnsw_index] for v in hnsw_pos_scores]
+                hnsw_max_score = self.hnsw_leave_one_out(hnsw_pos_score, obj)
+                hnsw_avg_score = np.mean(hnsw_pos_score)
+            except:
+                hnsw_max_score = 0
+                hnsw_avg_score = 0
+            self.obj_features[obj] = [
+                bm25_max_score,
+                bm25_avg_score,
+                hnsw_max_score,
+                hnsw_avg_score,
+            ]
+
+    def update_obj_scores(self, obj_scores: dict, corpus: list):
+        self.obj_scores.update(obj_scores)
+        pos_ids, neg_ids = [], []
+        for obj, score in obj_scores.items():
+            if score > 0:
+                try:
+                    pos_ids.append(self.obj_to_id[obj])
+                except:
+                    pos_id = corpus.index(obj)
+                    self.obj_to_id[obj] = pos_id
+                    self.id_to_obj[pos_id] = obj
+                    pos_ids.append(pos_id)
+                if self.query_scores.get(obj, 0) == 2 and obj not in self.pred_pos_objs:
+                    self.pred_pos_objs.append(obj)
+            else:
+                try:
+                    neg_ids.append(self.obj_to_id[obj])
+                except:
+                    neg_id = corpus.index(obj)
+                    self.obj_to_id[obj] = neg_id
+                    self.id_to_obj[neg_id] = obj
+                    neg_ids.append(neg_id)
+        self.pos_ids.extend(pos_ids)
+        self.neg_ids.extend(neg_ids)

@@ -46,11 +46,13 @@ class BM25Index(Index):
         # tokenization
         tokenized_corpus = []
         for doc in self.corpus:
+            doc = doc.replace("/", " ")
+            doc = doc.replace("-", " ")
             tokens = word_tokenize(doc.lower())
             tokens = [token for token in tokens if token not in self.stop_words]
             tokenized_corpus.append(tokens)
         # build BM25 index
-        bm25 = BM25Okapi(tokenized_corpus)
+        bm25 = BM25Okapi(tokenized_corpus, b=0.1)
         # save index
         with open(self.index_path, "wb") as f:
             pickle.dump(bm25, f)
@@ -69,6 +71,8 @@ class BM25Index(Index):
         unique_results = set()
         for q in query:
             # tokenization
+            q = q.replace("/", " ")
+            q = q.replace("-", " ")
             tokenized_query = [
                 token
                 for token in word_tokenize(q.lower())
@@ -107,10 +111,10 @@ class HNSWIndex:
     def __init__(self, corpus: list[str], dataset_name: str):
         self.corpus = corpus
         self.dataset_name = dataset_name
-        self.emb_model = SentenceTransformer("all-MiniLM-L6-v2", device="cuda")
-        self.dim = 384
+        self.emb_model = SentenceTransformer("BAAI/bge-base-en-v1.5", device="cuda")
+        self.dim = 768
         self.sim_metric = "cosine"
-        self.index_path = f"index/{dataset_name}_hnsw_index.bin"
+        self.index_path = f"index/{dataset_name}_hnsw_index_{self.dim}.bin"
         self.index = self.build_index()
 
     def build_index(self) -> hnswlib.Index:
@@ -126,7 +130,8 @@ class HNSWIndex:
 
         embs = self.emb_model.encode(self.corpus, batch_size=512)
         num_elements = embs.shape[0]
-        print(f"num elements: {num_elements}, dim: {self.dim}")
+        dim = embs.shape[1]
+        print(f"num elements: {num_elements}, dim: {dim}")
 
         # Declaring index
         p = hnswlib.Index(

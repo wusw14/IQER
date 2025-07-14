@@ -71,12 +71,6 @@ def run_inference(
             messages=messages,
             max_tokens=max_tokens,
             temperature=0.0,
-            top_p=0.8,
-            presence_penalty=1.5,
-            extra_body={
-                "top_k": 20,
-                "chat_template_kwargs": {"enable_thinking": False},
-            },
         )
         return response.choices[0].message.content
 

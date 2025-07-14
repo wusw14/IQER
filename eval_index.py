@@ -10,7 +10,7 @@ from index import BM25Index, HNSWIndex
 
 
 def eval_recall(queries, results, query_answer, corpus):
-    k_list = [10, 50, 100]
+    k_list = [10, 50, 100, 200, 500, 1000]
     # k_list = [20]
     rec_dict = {}
     for k in k_list:

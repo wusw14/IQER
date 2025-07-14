@@ -99,6 +99,7 @@ if __name__ == "__main__":
             recall = tp / len(gt)
             f1 = 2 * precision * recall / max(precision + recall, 1e-6)
         retrieve_recall = len(set(retrieved) & set(gt)) / len(gt)
+        missed = [obj for obj in gt if obj not in retrieved]
         ndcg = cal_ndcg(retrieved, gt)
         retrieve_recall_list.append(retrieve_recall)
         ndcg_list.append(ndcg)
@@ -109,6 +110,7 @@ if __name__ == "__main__":
             print(f"NDCG: {ndcg:.4f}")
             print(f"Pred: {pred}")
             print(f"GT: {gt}")
+            print(f"Missed: {missed}")
             print("==========================")
         pre_list.append(precision)
         rec_list.append(recall)
