@@ -2,6 +2,7 @@ import numpy as np
 from constants import DIVERSITY_THRESHOLD
 from scipy.stats import ttest_ind
 from retrieve import RetrievedInfo
+from collections import defaultdict
 
 
 def leave_one_out(scores: list[float]) -> float:
@@ -54,8 +55,38 @@ class Query:
                 if flag:
                     query_list.append(q)
                     query_words_list.append(words)
-        self.bm25_query_list = query_list
-        return query_list
+
+        if len(self.obj_scores) == 0 or sum(list(self.obj_scores.values())) == 0:
+            self.bm25_query_list = query_list
+            return query_list
+        # summarize the word frequency in positive and negative samples
+        pos_frequency = defaultdict(int)
+        neg_frequency = defaultdict(int)
+        for obj, score in self.obj_scores.items():
+            if score > 0:
+                for word in obj.split():
+                    pos_frequency[word.lower()] += 1
+            else:
+                for word in obj.split():
+                    neg_frequency[word.lower()] += 1
+        new_query_list = []
+        for query in query_list:
+            words = query.split()
+            word_ratio = {}
+            ratio_thr = 1
+            for word in words:
+                pos_freq = pos_frequency.get(word.lower(), 0)
+                neg_freq = neg_frequency.get(word.lower(), 0)
+                word_ratio[word.lower()] = pos_freq / (pos_freq + neg_freq + 1e-6)
+                if pos_freq > 0 and pos_freq / (pos_freq + neg_freq + 1e-6) < ratio_thr:
+                    ratio_thr = pos_freq / (pos_freq + neg_freq + 1e-6)
+            for word, ratio in word_ratio.items():
+                repeated_num = min(int(ratio / ratio_thr) - 1, 5)
+                if repeated_num > 0:
+                    words.extend([word] * repeated_num)
+            new_query_list.append(" ".join(words))
+        self.bm25_query_list = new_query_list
+        return new_query_list
 
     def select_diversified_query_words(self, emb_model):
         query_list = []

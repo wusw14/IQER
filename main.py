@@ -146,8 +146,9 @@ def solve_query(
 
         # if no new positive objs are found, stop
         if (
-            sum([query.query_scores.get(obj, 0) for obj in obj_scores]) == 0
-            and not if_continue
+            sum([query.query_scores.get(obj, 0) for obj in obj_scores])
+            == 0
+            # and not if_continue
         ):
             if sum([query.query_scores.get(obj, 0) for obj in query.obj_scores]) > 0:
                 break

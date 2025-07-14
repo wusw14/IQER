@@ -22,7 +22,7 @@ def weighted_logistic_loss(w, X, y, pos_weight=10, neg_weight=1):
     y = 2 * y - 1
     weighted_loss = np.mean(weights * np.log(1 + np.exp(-y * (z))))
     coef_diff_loss = (w[1] + w[2] - w[3] - w[4]) ** 2
-    loss = weighted_loss + 1e-3 * (np.sum(w[1:] ** 2) + coef_diff_loss)
+    loss = weighted_loss + 1e-3 * coef_diff_loss
     return loss
 
 
@@ -54,29 +54,49 @@ def prepare_data(query: Query):
     dev_y = np.concatenate(
         [np.ones(len(pos_samples)), np.zeros(len(neg_samples))], axis=0
     )
-    # create some pos samples
-    constructed_num = len(neg_samples) - len(pos_samples)
-    constructed_pos_samples = []
-    for i in range(constructed_num):
-        sample_idx = np.random.randint(0, len(pos_samples))
-        sample = pos_samples[sample_idx]
-        sample = deepcopy(sample)
-        idx = np.random.randint(0, 2)
-        if idx < 2:
-            val = sample[idx] + np.random.uniform(0, 0.2)
-            val = min(1, val)
-        # else:
-        #     val = sample[idx] - np.random.uniform(0, 0.2)
-        #     val = max(0, val)
-        sample[idx] = val
-        sample[2] = max(sample[0], sample[1])
-        constructed_pos_samples.append(sample)
-    pos_samples.extend(constructed_pos_samples)
+    # # create some pos samples
+    # constructed_num = len(neg_samples) - len(pos_samples)
+    # constructed_pos_samples = []
+    # for i in range(constructed_num):
+    #     sample_idx = np.random.randint(0, len(pos_samples))
+    #     sample = pos_samples[sample_idx]
+    #     sample = deepcopy(sample)
+    #     idx = np.random.randint(0, 2)
+    #     if idx < 2:
+    #         val = sample[idx] + np.random.uniform(0, 0.2)
+    #         val = min(1, val)
+    #     # else:
+    #     #     val = sample[idx] - np.random.uniform(0, 0.2)
+    #     #     val = max(0, val)
+    #     sample[idx] = val
+    #     sample[2] = max(sample[0], sample[1])
+    #     constructed_pos_samples.append(sample)
+    # pos_samples.extend(constructed_pos_samples)
     train_X = np.concatenate([pos_samples, neg_samples], axis=0)
     train_y = np.concatenate(
         [np.ones(len(pos_samples)), np.zeros(len(neg_samples))], axis=0
     )
     return train_X, train_y, dev_X, dev_y, dev_objs
+
+
+def process_feature(train_X, dev_X, test_X):
+    def normalize(X, max_scalar_v1, max_scalar_v3):
+        X[:, 0] = X[:, 0] / max_scalar_v1
+        X[:, 1] = X[:, 1] / max_scalar_v1
+        X[:, 2] = X[:, 2] / max_scalar_v3
+        X[:, 3] = X[:, 3] / max_scalar_v3
+        new_feature_1 = np.maximum(X[:, 0], X[:, 2])
+        new_feature_2 = np.maximum(X[:, 1], X[:, 3])
+        X = np.c_[X, new_feature_1, new_feature_2]
+        return X
+
+    max_scalar_v1 = np.max(train_X[:, 0])
+    max_scalar_v3 = np.max(train_X[:, 2])
+    print(f"max_scalar_v1: {max_scalar_v1}, max_scalar_v3: {max_scalar_v3}")
+    train_X = normalize(train_X, max_scalar_v1, max_scalar_v3)
+    dev_X = normalize(dev_X, max_scalar_v1, max_scalar_v3)
+    test_X = normalize(test_X, max_scalar_v1, max_scalar_v3)
+    return train_X, dev_X, test_X
 
 
 def rerank_retrieved_objs(
@@ -146,6 +166,19 @@ def rerank_retrieved_objs(
 
     # TODO: train the model to rerank the objs
     train_X, train_y, dev_X, dev_y, dev_objs = prepare_data(query)
+    test_X = []
+    candidate_objs = list(
+        (set(bm25_objs) | set(hnsw_objs)) - set(list(query.obj_scores.keys()))
+    )
+    print(len(candidate_objs))
+    for i, obj in enumerate(candidate_objs):
+        bm25_score = bm25_obj_score_dict.get(obj, [0, 0])
+        hnsw_score = hnsw_obj_score_dict.get(obj, [0, 0])
+        feature = [bm25_score[0], bm25_score[1], hnsw_score[0], hnsw_score[1]]
+        test_X.append(feature)
+    test_X = np.array(test_X)
+
+    train_X, dev_X, test_X = process_feature(train_X, dev_X, test_X)
     print(f"sample train_X: {(np.round(train_X[:3], 4)).tolist()}")
     # data normalization
     scaler = StandardScaler()
@@ -162,7 +195,7 @@ def rerank_retrieved_objs(
         constraints=constraints,
     )
     w_optimized = result.x
-    print(f"w_optimized: {w_optimized}")
+    print(f"w_optimized: {list(np.round(w_optimized, 4))}")
     y_prob = pred_logistic(dev_X_with_intercept, w_optimized)
     y_pred = (y_prob > 0.5).astype(int)
     print("\nclassification report:\n", classification_report(dev_y, y_pred))
@@ -175,19 +208,6 @@ def rerank_retrieved_objs(
     thr = min(thr, 0.5)
 
     # predict
-    test_X = []
-    candidate_objs = list(
-        (set(bm25_objs) | set(hnsw_objs)) - set(list(query.obj_scores.keys()))
-    )
-    print(len(candidate_objs))
-    for i, obj in enumerate(candidate_objs):
-        bm25_score = bm25_obj_score_dict.get(obj, [0, 0])
-        hnsw_score = hnsw_obj_score_dict.get(obj, [0, 0])
-        feature = [bm25_score[0], bm25_score[1], hnsw_score[0], hnsw_score[1]]
-        test_X.append(feature)
-    test_X = np.array(test_X)
-    print(np.mean(test_X, axis=0))
-    print(np.std(test_X, axis=0))
     test_X = np.c_[np.ones(test_X.shape[0]), scaler.transform(test_X)]
     # y_pred_prob = clf.predict_proba(test_X)[:, 1]
     y_pred_prob = pred_logistic(test_X, w_optimized)

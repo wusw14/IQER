@@ -24,7 +24,15 @@
 # python -u main.py --dataset product --index_combine_method weighted --exp_name tablerag_0.5_B200 --budget 200 --k 200 > logs/tablerag/product_0.5_B200.log
 
 
+python -u main.py --dataset animal --index_combine_method weighted --exp_name our_logistic_v2_B100 --budget 100 --k 100 > logs/our_logistic_v2/animal_B100.log
+python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_logistic_v2_B100 --budget 100 --k 100 > logs/our_logistic_v2/chemical_B100.log
+python -u main.py --dataset product --index_combine_method weighted --exp_name our_logistic_v2_B100 --budget 100 --k 100 > logs/our_logistic_v2/product_B100.log
 
-python -u main.py --dataset animal --index_combine_method weighted --exp_name our_logistic --budget 500 --k 500 > logs/our_logistic/animal_v7.log
-python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_logistic --budget 500 --k 500 > logs/our_logistic/chemical_v7.log
-python -u main.py --dataset product --index_combine_method weighted --exp_name our_logistic --budget 500 --k 500 > logs/our_logistic/product_v7.log
+
+python -u main.py --dataset animal --index_combine_method weighted --exp_name our_logistic_v2_B200 --budget 200 --k 200 > logs/our_logistic_v2/animal_B200.log
+python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_logistic_v2_B200 --budget 200 --k 200 > logs/our_logistic_v2/chemical_B200.log
+python -u main.py --dataset product --index_combine_method weighted --exp_name our_logistic_v2_B200 --budget 200 --k 200 > logs/our_logistic_v2/product_B200.log
+
+python -u main.py --dataset animal --index_combine_method weighted --exp_name our_logistic_v2_B500 --budget 500 --k 500 > logs/our_logistic_v2/animal_B500.log
+python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_logistic_v2_B500 --budget 500 --k 500 > logs/our_logistic_v2/chemical_B500.log
+python -u main.py --dataset product --index_combine_method weighted --exp_name our_logistic_v2_B500 --budget 500 --k 500 > logs/our_logistic_v2/product_B500.log
