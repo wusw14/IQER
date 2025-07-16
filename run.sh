@@ -1,6 +1,6 @@
-# python -u main.py --dataset animal --index_combine_method weighted --exp_name our_v4_0628 > logs/our_0628/animal.log
-# python -u main.py --dataset product --index_combine_method weighted --exp_name our_v4_0628 > logs/our_0628/product.log
-# python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_v4_0628 > logs/our_0628/chemical.log
+# python -u main.py --dataset animal --index_combine_method weighted --exp_name our_0716_v4_0628 > logs/our_0716_0628/animal.log
+# python -u main.py --dataset product --index_combine_method weighted --exp_name our_0716_v4_0628 > logs/our_0716_0628/product.log
+# python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_0716_v4_0628 > logs/our_0716_0628/chemical.log
 # python -u pneuma.py --dataset animal --exp_name pneuma --alpha 0
 # python -u pneuma.py --dataset animal --exp_name pneuma --alpha 1
 # python -u pneuma.py --dataset animal --exp_name pneuma --alpha 0.5
@@ -24,15 +24,15 @@
 # python -u main.py --dataset product --index_combine_method weighted --exp_name tablerag_0.5_B200 --budget 200 --k 200 > logs/tablerag/product_0.5_B200.log
 
 
-python -u main.py --dataset animal --index_combine_method weighted --exp_name our_logistic_v2_B100 --budget 100 --k 100 > logs/our_logistic_v2/animal_B100.log
-python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_logistic_v2_B100 --budget 100 --k 100 > logs/our_logistic_v2/chemical_B100.log
-python -u main.py --dataset product --index_combine_method weighted --exp_name our_logistic_v2_B100 --budget 100 --k 100 > logs/our_logistic_v2/product_B100.log
+python -u main.py --dataset animal --index_combine_method weighted --exp_name our_0716_B100 --budget 100 --k 100 > logs/our_0716/animal_B100.log
+python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_0716_B100 --budget 100 --k 100 > logs/our_0716/chemical_B100.log
+python -u main.py --dataset product --index_combine_method weighted --exp_name our_0716_B100 --budget 100 --k 100 > logs/our_0716/product_B100.log
 
 
-python -u main.py --dataset animal --index_combine_method weighted --exp_name our_logistic_v2_B200 --budget 200 --k 200 > logs/our_logistic_v2/animal_B200.log
-python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_logistic_v2_B200 --budget 200 --k 200 > logs/our_logistic_v2/chemical_B200.log
-python -u main.py --dataset product --index_combine_method weighted --exp_name our_logistic_v2_B200 --budget 200 --k 200 > logs/our_logistic_v2/product_B200.log
+python -u main.py --dataset animal --index_combine_method weighted --exp_name our_0716_B200 --budget 200 --k 200 > logs/our_0716/animal_B200.log
+python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_0716_B200 --budget 200 --k 200 > logs/our_0716/chemical_B200.log
+python -u main.py --dataset product --index_combine_method weighted --exp_name our_0716_B200 --budget 200 --k 200 > logs/our_0716/product_B200.log
 
-python -u main.py --dataset animal --index_combine_method weighted --exp_name our_logistic_v2_B500 --budget 500 --k 500 > logs/our_logistic_v2/animal_B500.log
-python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_logistic_v2_B500 --budget 500 --k 500 > logs/our_logistic_v2/chemical_B500.log
-python -u main.py --dataset product --index_combine_method weighted --exp_name our_logistic_v2_B500 --budget 500 --k 500 > logs/our_logistic_v2/product_B500.log
+python -u main.py --dataset animal --index_combine_method weighted --exp_name our_0716_B500 --budget 500 --k 500 > logs/our_0716/animal_B500.log
+python -u main.py --dataset chemical_compound --index_combine_method weighted --exp_name our_0716_B500 --budget 500 --k 500 > logs/our_0716/chemical_B500.log
+python -u main.py --dataset product --index_combine_method weighted --exp_name our_0716_B500 --budget 500 --k 500 > logs/our_0716/product_B500.log

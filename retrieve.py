@@ -196,7 +196,9 @@ def agg_results(
     )
     min_scalar = max(np.min(agg_pos_scores), 0)
     max_scalar = max(np.max(agg_pos_scores), 1e-6)
-    k = min(k, np.sum(np.array(pos_scores_max) > 0))
+    # k = min(k, np.sum(np.array(pos_scores_max) > 0))
+    k = np.sum(np.array(pos_scores_max) > 0)
+    print(f"retrieved num [k]: {k}")
     retrieved_ids = retrieved_ids[:k]
     agg_pos_scores = agg_pos_scores[:k]
     agg_neg_scores = agg_neg_scores[:k]

@@ -83,7 +83,8 @@ class Query:
             for word, ratio in word_ratio.items():
                 repeated_num = min(int(ratio / ratio_thr) - 1, 5)
                 if repeated_num > 0:
-                    words.extend([word] * repeated_num)
+                    # words.extend([word] * repeated_num)
+                    words.append(word)
             new_query_list.append(" ".join(words))
         self.bm25_query_list = new_query_list
         return new_query_list

@@ -27,8 +27,9 @@ def print_case(corpus, query, pred, gt, rec):
 if __name__ == "__main__":
     dataset_name = sys.argv[1]
     exp_name = sys.argv[2]
-    method = sys.argv[3] if len(sys.argv) > 3 else "weighted"
-    limit = int(sys.argv[4]) if len(sys.argv) > 4 else None
+    # method = sys.argv[3] if len(sys.argv) > 3 else "weighted"
+    method = "weighted"
+    limit = int(sys.argv[3]) if len(sys.argv) > 4 else None
     df, query_answer, query_template, filename = load_data(dataset_name)
     result_data = json.load(
         open(f"results/{exp_name}/{dataset_name}_{method}.json", "r")
