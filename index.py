@@ -79,6 +79,8 @@ class BM25Index(Index):
                 if token not in self.stop_words
             ]
             score = self.index.get_scores(tokenized_query)
+            # norm_term = np.sum([self.index.idf.get(q) or 0 for q in tokenized_query])
+            score = score / len(tokenized_query)
             full_scores.append(score)
             result = np.argsort(score)[::-1][:top_n].tolist()  # get top_n indices
             score = np.array(score)[result]
@@ -88,6 +90,25 @@ class BM25Index(Index):
         unique_results = list(unique_results)
         unique_scores = np.array(full_scores)[:, unique_results]
         return results, scores, unique_results, unique_scores
+
+    def filter_query_objs(self, query_objs: list[str]) -> list[str]:
+        filtered_query_objs = []
+        for q in query_objs:
+            q = q.replace("/", " ")
+            q = q.replace("-", " ")
+            tokenized_query = [
+                token
+                for token in word_tokenize(q.lower())
+                if token not in self.stop_words
+            ]
+            obj_tokens = []
+            for token in tokenized_query:
+                idf = self.index.idf.get(token, 0)
+                if idf > 0:
+                    obj_tokens.append(token)
+            if len(obj_tokens) > 0:
+                filtered_query_objs.append(" ".join(obj_tokens))
+        return list(set(filtered_query_objs))
 
     def get_neg_scores(
         self, query: list[str], unique_results: list[int]

@@ -35,6 +35,20 @@ def eval_recall(queries, results, query_answer, corpus):
     return rec_dict
 
 
+def merge_results(bm25_result, bm25_score, hnsw_result, hnsw_score):
+    bm25_obj_scores = {obj: score for obj, score in zip(bm25_result, bm25_score)}
+    hnsw_obj_scores = {obj: score for obj, score in zip(hnsw_result, hnsw_score)}
+    obj_scores = {}
+    for obj in set(list(bm25_result)) | set(list(hnsw_result)):
+        obj_scores[obj] = (
+            bm25_obj_scores.get(obj, 0) + hnsw_obj_scores.get(obj, 0)
+        ) / 2
+    sorted_obj_scores = sorted(obj_scores.items(), key=lambda x: x[1], reverse=True)
+    results = [obj for obj, _ in sorted_obj_scores]
+    scores = [obj_scores[obj] for obj, _ in sorted_obj_scores]
+    return results, scores
+
+
 if __name__ == "__main__":
     dataset_name = sys.argv[1]
     df, query_answer, query_template, filename = load_data(dataset_name)
@@ -53,23 +67,51 @@ if __name__ == "__main__":
     query = list(query_answer.keys())
 
     # Query using BM25
-    start_time = time.time()
     if index_type == "bm25":
         index = BM25Index(corpus, dataset_name)
+        start_time = time.time()
         results, scores, _, _ = index.search(query, top_n=1000)
     elif index_type == "hnsw":
         index = HNSWIndex(corpus, dataset_name)
+        start_time = time.time()
         results, scores, _, _, _ = index.search(query, top_n=1000)
+    elif index_type == "hybrid":
+        bm25_index = BM25Index(corpus, dataset_name)
+        hnsw_index = HNSWIndex(corpus, dataset_name)
+        start_time = time.time()
+        bm25_results, bm25_scores, _, _ = bm25_index.search(query, top_n=1000)
+        hnsw_results, hnsw_scores, _, _, _ = hnsw_index.search(query, top_n=1000)
+        bm25_max, hnsw_max = max(np.max(bm25_scores), 1e-6), max(
+            np.max(hnsw_scores), 1e-6
+        )
+        bm25_min, hnsw_min = max(np.min(bm25_scores), 0), max(np.min(hnsw_scores), 0)
+        print(f"BM25 max: {bm25_max:.4f}, BM25 min: {bm25_min:.4f}")
+        print(f"HNSW max: {hnsw_max:.4f}, HNSW min: {hnsw_min:.4f}")
+        bm25_scores = np.array(bm25_scores)
+        hnsw_scores = np.array(hnsw_scores)
+        bm25_scores = (bm25_scores - bm25_min) / (bm25_max - bm25_min)
+        hnsw_scores = (hnsw_scores - hnsw_min) / (hnsw_max - hnsw_min)
+        results, scores = [], []
+        for i, q in enumerate(query):
+            bm25_result = bm25_results[i]
+            hnsw_result = hnsw_results[i]
+            bm25_score = bm25_scores[i]
+            hnsw_score = hnsw_scores[i]
+            result, score = merge_results(
+                bm25_result, bm25_score, hnsw_result, hnsw_score
+            )
+            results.append(result)
+            scores.append(score)
     time_cost = (time.time() - start_time) / len(query)
     print(f"Query time per query: {time_cost:.4f} seconds")
 
     # eval recall
-    eval_recall(query, results, query_answer, corpus)
+    # eval_recall(query, results, query_answer, corpus)
 
-    exit()
     # threshold range
-    scores = np.array(scores)
-    scores = scores / np.max(scores)
+    if index_type != "hybrid":
+        scores = np.array(scores)
+        scores = scores / np.max(scores)
     opt_threshold = 0
     opt_f1 = 0
     for threshold in np.arange(0.1, 1.0, 0.01):
@@ -104,16 +146,17 @@ if __name__ == "__main__":
             k_list.append(len(result))
             pre_list.append(precision)
             rec_list.append(recall)
-        f1_list = np.array(f1_list)
-        k_list = np.array(k_list)
-        pre_list = np.array(pre_list)
-        rec_list = np.array(rec_list)
-        if np.mean(f1_list) > opt_f1:
-            opt_f1 = np.mean(f1_list)
+        # f1_list = np.array(f1_list)
+        pre = np.mean(pre_list)
+        rec = np.mean(rec_list)
+        f1 = 2 * pre * rec / max(pre + rec, 1e-6)
+        k = np.mean(k_list)
+        if f1 > opt_f1:
+            opt_f1 = f1
             opt_threshold = threshold
-            opt_k = np.mean(k_list)
-            opt_pre = np.mean(pre_list)
-            opt_rec = np.mean(rec_list)
+            opt_k = k
+            opt_pre = pre
+            opt_rec = rec
     print(f"Optimal threshold: {opt_threshold}, Optimal k: {opt_k:.2f}")
     print(f"Optimal pre/rec/f1: {opt_pre*100:.2f}/{opt_rec*100:.2f}/{opt_f1*100:.2f}")
     print(f"{opt_pre*100:.2f}")

@@ -8,7 +8,8 @@ import os
 from load_data import load_data
 import time
 from lotus.types import CascadeArgs, ProxyModel
-from lotus.vector_store import FaissVS
+
+# from lotus.vector_store import FaissVS
 
 
 def save_results(results, output_path):
@@ -26,6 +27,7 @@ def parse_args():
     parser.add_argument("--top_k", type=int, default=10)
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--alpha", type=float, default=0.5)
+    parser.add_argument("--llm", type=str, default="llama")
     parser.add_argument(
         "--index_combine_method",
         type=str,
@@ -45,18 +47,35 @@ if __name__ == "__main__":
     #     max_tokens=1024,
     #     max_batch_size=512,
     # )
+    args = parse_args()
+    print(args)
+
+    if args.llm == "llama":
+        model_name = "openai/meta-llama/Llama-3.3-70B-Instruct"
+        api_key = "llama"
+        port = 1117
+    elif args.llm == "deepseek":
+        model_name = "openai/deepseek-ai/DeepSeek-R1-Distill-Llama-70B"
+        api_key = "deepseek"
+        port = 1117
+    elif args.llm == "qwen":
+        model_name = "openai/Qwen/Qwen2.5-72B-Instruct"
+        api_key = "qwen-72b"
+        port = 1171
+    else:
+        raise ValueError(f"Invalid LLM: {args.llm}")
     lm = LM(
-        model="openai/meta-llama/Llama-3.3-70B-Instruct",
-        api_base="http://localhost:1118/v1",
-        api_key="llama",
-        max_tokens=1024,
+        model=model_name,
+        api_base=f"http://localhost:{port}/v1",
+        api_key=api_key,
+        max_tokens=5,
         max_batch_size=512,
     )
     helper_lm = LM(
         model="openai/meta-llama/Llama-3.1-8B-Instruct",
-        api_base="http://localhost:1110/v1",
+        api_base="http://localhost:1108/v1",
         api_key="llama",
-        max_tokens=10,
+        max_tokens=5,
         max_batch_size=512,
     )
     # rm = SentenceTransformersRM(
@@ -65,7 +84,7 @@ if __name__ == "__main__":
     #     device="cuda",
     # )
     # print(rm.transformer.device)
-    vs = FaissVS()
+    # vs = FaissVS()
     cascade_args = CascadeArgs(
         recall_target=0.95,
         precision_target=0.95,
@@ -76,14 +95,11 @@ if __name__ == "__main__":
     )
     # lotus.settings.configure(lm=lm, rm=rm, vs=vs)
     lotus.settings.configure(lm=lm, helper_lm=helper_lm)
-    args = parse_args()
-    print(args)
+    # lotus.settings.configure(lm=lm)
 
     args.output_dir = f"results/{args.exp_name}"
     os.makedirs(args.output_dir, exist_ok=True)
-    output_path = os.path.join(
-        args.output_dir, f"{args.dataset}_{args.index_combine_method}.json"
-    )
+    output_path = os.path.join(args.output_dir, f"{args.dataset}_{args.llm}.json")
     # load results
     if os.path.exists(output_path) and args.exp_name != "debug":
         results = json.load(open(output_path, "r"))

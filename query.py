@@ -3,6 +3,7 @@ from constants import DIVERSITY_THRESHOLD
 from scipy.stats import ttest_ind
 from retrieve import RetrievedInfo
 from collections import defaultdict
+from index import BM25Index
 
 
 def leave_one_out(scores: list[float]) -> float:
@@ -17,6 +18,7 @@ class Query:
     def __init__(self, org_query: str, reformat_template: str):
         self.org_query = org_query
         self.query_scores = {org_query: 2}  # store the results from rethinking
+        self.bm25_query_scores = {org_query: 2}
         self.obj_scores = {}  # store the scores of the checked objects
         self.queries_from_generated = []
         self.queries_from_table = []
@@ -83,8 +85,8 @@ class Query:
             for word, ratio in word_ratio.items():
                 repeated_num = min(int(ratio / ratio_thr) - 1, 5)
                 if repeated_num > 0:
-                    # words.extend([word] * repeated_num)
-                    words.append(word)
+                    words.extend([word] * repeated_num)
+                    # words.append(word)
             new_query_list.append(" ".join(words))
         self.bm25_query_list = new_query_list
         return new_query_list
@@ -157,6 +159,9 @@ class Query:
 
     def update_query_scores(self, query_scores: dict):
         self.query_scores.update(query_scores)
+
+    def update_bm25_query_scores(self, bm25_query_scores: dict):
+        self.bm25_query_scores.update(bm25_query_scores)
 
     def hnsw_leave_one_out(self, scores: list[float], obj: str) -> float:
         if (

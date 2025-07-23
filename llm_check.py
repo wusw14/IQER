@@ -8,11 +8,12 @@ from concurrent.futures import ThreadPoolExecutor
 # from reformulate import refine_query
 
 client = openai.OpenAI(
-    base_url="http://localhost:1117/v1",  # vLLM server address
-    api_key="llama",  # dummy token
+    base_url="http://localhost:1172/v1",  # vLLM server address
+    api_key="qwen-72b",  # dummy token
 )
 
-model_path = "meta-llama/Llama-3.3-70B-Instruct"
+# model_path = "meta-llama/Llama-3.3-70B-Instruct"
+model_path = "Qwen/Qwen2.5-72B-Instruct"
 
 
 def process_single_prompt(cond: str, col: str, val: str) -> str:
@@ -71,6 +72,7 @@ def run_inference(
             messages=messages,
             max_tokens=max_tokens,
             temperature=0.0,
+            seed=42,
         )
         return response.choices[0].message.content
 

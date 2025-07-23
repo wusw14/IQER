@@ -14,3 +14,5 @@ index
 tmp.*
 __pycache__
 index_dir
+debug
+*.ipynb

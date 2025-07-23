@@ -4,6 +4,7 @@ from constants import CHECK_NUM, MIN_CHECK_NUM, MAX_CHECK_NUM
 import numpy as np
 from copy import deepcopy
 from collections import defaultdict
+import json
 
 
 def get_next_objs(
@@ -67,7 +68,10 @@ def prepare_data(
         else:
             neg_samples.append(feature)
             neg_objs.append(obj)
+    print(f"pos_objs: {pos_objs}")
+    print(f"neg_objs: {neg_objs[:5]}")
     train_X = np.concatenate([pos_samples, neg_samples], axis=0)
+    train_objs = pos_objs + neg_objs
     train_y = np.concatenate(
         [np.ones(len(pos_samples)), np.zeros(len(neg_samples))], axis=0
     )
@@ -83,7 +87,7 @@ def prepare_data(
         feature = [bm25_score[0], bm25_score[1], hnsw_score[0], hnsw_score[1]]
         test_X.append(feature)
     test_X = np.array(test_X)
-    return train_X, train_y, test_X, candidate_objs
+    return train_X, train_y, test_X, candidate_objs, train_objs
 
 
 def agg_feature(train_X, test_X, bm25_weights, hnsw_weights):
@@ -107,52 +111,45 @@ def agg_feature(train_X, test_X, bm25_weights, hnsw_weights):
 
 
 def search_best_params(X, y):
-    # w1 * bm25 + w2 * hnsw + (1 - w1 - w2) * max(bm25 * beta, hnsw)
+    # w1 * bm25 + w2 * hnsw + (1 - w1 - w2) * max(bm25, hnsw)
     # best_ndcg = 0
     best_metric = len(y)
-    best_beta, best_w1, best_w2 = 0, 0, 0
-    for beta in np.arange(1, 2, 0.1):
-        for w1 in np.arange(0, 1, 0.1):
-            for w2 in np.arange(0, 1, 0.1):
-                if w1 + w2 > 1:
-                    continue
-                w3 = 1 - w1 - w2
-                score = (
-                    w1 * X[:, 0]
-                    + w2 * X[:, 1]
-                    + w3 * np.maximum(X[:, 0] * beta, X[:, 1])
-                )
-                _, sorted_y = zip(
-                    *sorted(zip(score, y), key=lambda x: x[0], reverse=True)
-                )
-                # calculate ndcg
-                dcg = 0
-                for i, y_i in enumerate(sorted_y):
-                    if y_i == 1:
-                        dcg += 1 / np.log2(i + 2)
-                        k = i + 1
-                idcg = sum([1 / np.log2(i + 2) for i in range(int(sum(y)))])
-                ndcg = dcg / idcg
-                metric_value = k - ndcg
-                if metric_value < best_metric or (
-                    metric_value == best_metric
-                    and w1 + w2 < best_w1 + best_w2
-                    and w1 + w2 > 0
-                ):
-                    best_ndcg = ndcg
-                    best_k = k
-                    best_metric = metric_value
-                    best_beta, best_w1, best_w2 = beta, w1, w2
-                    best_score = deepcopy(score)
+    best_w1, best_w2 = 0, 0
+    for w1 in np.arange(0, 1, 0.1):
+        for w2 in np.arange(0, 1, 0.1):
+            if w1 + w2 > 1:
+                continue
+            w3 = 1 - w1 - w2
+            score = w1 * X[:, 0] + w2 * X[:, 1] + w3 * np.maximum(X[:, 0], X[:, 1])
+            _, sorted_y = zip(*sorted(zip(score, y), key=lambda x: x[0], reverse=True))
+            # calculate ndcg
+            dcg = 0
+            for i, y_i in enumerate(sorted_y):
+                if y_i == 1:
+                    dcg += 1 / np.log2(i + 2)
+                    k = i + 1
+            idcg = sum([1 / np.log2(i + 2) for i in range(int(sum(y)))])
+            ndcg = dcg / idcg
+            metric_value = k - ndcg
+            if metric_value < best_metric or (
+                metric_value == best_metric
+                and w1 + w2 < best_w1 + best_w2
+                and w1 + w2 > 0
+            ):
+                best_ndcg = ndcg
+                best_k = k
+                best_metric = metric_value
+                best_w1, best_w2 = w1, w2
+                best_score = deepcopy(score)
     neg_cnt = 0
     for i, score in enumerate(best_score):
         if y[i] == 1 or neg_cnt < 5:
-            print(f"y={y[i]}, score={score:.2f}")
+            print(f"y={y[i]}, score={score:.2f}, feature={list(np.round(X[i], 4))}")
         if y[i] == 0:
             neg_cnt += 1
     # print(f"BEST NDCG: {best_ndcg:.4f}")
     print(f"BEST K: {best_k}, BEST NDCG: {best_ndcg:.4f}")
-    return best_beta, best_w1, best_w2, best_score
+    return best_w1, best_w2, best_score
 
 
 def determine_check_num_and_threshold(train_y, train_score):
@@ -165,6 +162,7 @@ def determine_check_num_and_threshold(train_y, train_score):
     position_diff_list = []
     score_diff_list = []
     score_diff = None
+    score_diff_max = 0.05
     min_pos_score = 1
     for i, (score, y) in enumerate(zip(sorted_score, sorted_y)):
         if y == 1:
@@ -175,6 +173,7 @@ def determine_check_num_and_threshold(train_y, train_score):
                     score_diff = last_pos_score - score
                 else:
                     score_diff = (score_diff + last_pos_score - score) / 2
+                score_diff_max = max(score_diff_max, last_pos_score - score)
             score_diff_list.append(max(last_pos_score - score, 0))
             last_pos_score = min(score, 2)
             min_pos_score = min(min_pos_score, score)
@@ -182,7 +181,7 @@ def determine_check_num_and_threshold(train_y, train_score):
         score_diff = 0
     check_num = np.max(position_diff_list) * 2
     # threshold = min_pos_score - 1.96 * np.std(score_diff_list)
-    threshold = min_pos_score - 2 * score_diff
+    threshold = min_pos_score - 2 * score_diff_max
     return check_num, threshold
 
 
@@ -219,7 +218,7 @@ def rerank_retrieved_objs(
         )
         return obj_to_check, False
 
-    train_X, train_y, test_X, candidate_objs = prepare_data(
+    train_X, train_y, test_X, candidate_objs, train_objs = prepare_data(
         query, bm25_objs, hnsw_objs, bm25_obj_score_dict, hnsw_obj_score_dict
     )
     bm25_weights = [0.5, 0.5]
@@ -230,8 +229,11 @@ def rerank_retrieved_objs(
         test_obj_to_feature[obj] = list(np.round(feature, 4))
 
     # search the best score function
-    best_beta, best_w1, best_w2, train_score = search_best_params(train_X, train_y)
-    print(f"best_beta: {best_beta:.2f}, best_w1: {best_w1:.2f}, best_w2: {best_w2:.2f}")
+    best_w1, best_w2, train_score = search_best_params(train_X, train_y)
+    print(f"best_w1: {best_w1:.2f}, best_w2: {best_w2:.2f}")
+    obj_score_to_save = {}
+    for obj, score in zip(train_objs, train_score):
+        obj_score_to_save[obj] = score
 
     # determine target number of objs to check
     check_num, threshold = determine_check_num_and_threshold(train_y, train_score)
@@ -240,15 +242,19 @@ def rerank_retrieved_objs(
     test_score = (
         best_w1 * test_X[:, 0]
         + best_w2 * test_X[:, 1]
-        + (1 - best_w1 - best_w2) * np.maximum(test_X[:, 0] * best_beta, test_X[:, 1])
+        + (1 - best_w1 - best_w2) * np.maximum(test_X[:, 0], test_X[:, 1])
     )
     obj_score = {}
     for obj, score in zip(candidate_objs, test_score):
         obj_score[obj] = score
+        obj_score_to_save[obj] = score
     sorted_obj_score = sorted(obj_score.items(), key=lambda x: x[1], reverse=True)
+    # # save the obj_score to a json file
+    # with open(f"debug/chemical/{query.org_query}.json", "w") as f:
+    #     json.dump(obj_score_to_save, f, indent=4)
     obj_to_check = []
     for i, (obj, score) in enumerate(sorted_obj_score):
-        if (i < max(check_num, MIN_CHECK_NUM) or score > threshold) and i < min(
+        if (i < MIN_CHECK_NUM or score > threshold) and i < min(
             MAX_CHECK_NUM, args.budget - len(query.obj_scores)
         ):
             obj_to_check.append(obj)
