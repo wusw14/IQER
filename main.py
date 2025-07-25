@@ -10,6 +10,7 @@ from query import Query
 import numpy as np
 from index import BM25Index, HNSWIndex
 from rerank import rerank_retrieved_objs
+from constants import CHECK_NUM
 
 
 def parse_args():
@@ -25,6 +26,8 @@ def parse_args():
     parser.add_argument("--early_stop", action="store_true")
     parser.add_argument("--rethink", action="store_true")
     parser.add_argument("--budget", type=int, default=100)
+    parser.add_argument("--tau", type=float, default=0.01)
+    parser.add_argument("--epsilon", type=float, default=0.1)
     parser.add_argument(
         "--index_combine_method",
         type=str,
@@ -87,8 +90,12 @@ def solve_query(
     # Step 3: Iteratively refine the query and retrieve the cell values
     early_stop = 0
     step = 0
+    last_pos_num = 0
+    check_num = CHECK_NUM
     while len(query.obj_scores) < args.budget:
+        step += 1
         print(f"\n======Step {step}=======")
+        check_num = min(check_num, args.budget - len(query.obj_scores))
 
         # step 3.1: score and select the diversified query words from the query list
         start_time = time.time()
@@ -97,12 +104,15 @@ def solve_query(
         if len(new_query_objs) > 0:
             query_scores_new = score_query(query.query_condition, new_query_objs)
             query.update_query_scores(query_scores_new)
-        query_list = query.select_diversified_query_words(hnsw_index.emb_model)
-        bm25_queries = query.select_bm25_query_words()
-        print(f"Step {step} Diversified query list ({len(query_list)}): {query_list}")
-        print(f"Step {step} BM25 query list ({len(bm25_queries)}): {bm25_queries}")
-        refine_time += time.time() - start_time
-        print(f"Time for refining: {time.time() - start_time:.4f}s")
+        if step == 1 or last_pos_num > 0:
+            query_list = query.select_diversified_query_words(hnsw_index.emb_model)
+            bm25_queries = query.select_bm25_query_words()
+            print(
+                f"Step {step} Diversified query list ({len(query_list)}): {query_list}"
+            )
+            print(f"Step {step} BM25 query list ({len(bm25_queries)}): {bm25_queries}")
+            refine_time += time.time() - start_time
+            print(f"Time for refining: {time.time() - start_time:.4f}s")
 
         # step 3.2: retrieve the corpus based on the query list
         start_time = time.time()
@@ -121,15 +131,15 @@ def solve_query(
 
         # step 3.3: rerank the retrieved objs and select the objs to be checked
         start_time = time.time()
-        obj_to_check, if_continue = rerank_retrieved_objs(
+        obj_to_check = rerank_retrieved_objs(
             query,
             retrieved_info,
             args,
-            corpus,
+            check_num,
         )
         rerank_time += time.time() - start_time
         print(f"Time for reranking: {time.time() - start_time:.4f}s")
-        print(f"obj_to_check: {obj_to_check}")
+        print(f"obj_to_check ({len(obj_to_check)}): {obj_to_check}")
 
         # step 3.4: llm check the retrieved objs
         start_time = time.time()
@@ -144,21 +154,20 @@ def solve_query(
         print(f"query_scores: {query_scores}")
         print(f"Time for checking: {time.time() - start_time:.4f}s")
 
+        last_pos_num = sum([query.query_scores.get(obj, 0) for obj in obj_scores])
+        if last_pos_num == 0:
+            check_num = 2 * check_num
+
         # if no new positive objs are found, stop
         if (
-            sum([query.query_scores.get(obj, 0) for obj in obj_scores])
-            == 0
-            # and not if_continue
+            args.early_stop
+            and sum([query.query_scores.get(obj, 0) for obj in obj_scores]) == 0
+            and (
+                sum([query.query_scores.get(obj, 0) for obj in query.obj_scores]) > 0
+                or len(obj_to_check) == 0
+            )
         ):
-            if sum([query.query_scores.get(obj, 0) for obj in query.obj_scores]) > 0:
-                break
-            elif sum(query.obj_scores.values()) > 0:
-                early_stop += 1
-                if early_stop >= 3:
-                    break
-        else:
-            early_stop = 0
-        step += 1
+            break
 
     return {
         "query": query.org_query,

@@ -8,7 +8,12 @@ import json
 
 
 def get_next_objs(
-    bm25_objs, bm25_agg_pos_scores, hnsw_objs, hnsw_agg_pos_scores, query: Query
+    bm25_objs,
+    bm25_agg_pos_scores,
+    hnsw_objs,
+    hnsw_agg_pos_scores,
+    query: Query,
+    check_num: int,
 ):
     # sort the retrieved objs by the maximum of bm25 and hnsw scores
     obj_to_check_scores = defaultdict(int)
@@ -32,7 +37,7 @@ def get_next_objs(
         obj_to_check_scores.items(), key=lambda x: x[1], reverse=True
     )
     # get the objs to check
-    obj_to_check = [obj for obj, _ in obj_to_check_scores[:CHECK_NUM]]
+    obj_to_check = [obj for obj, _ in obj_to_check_scores[:check_num]]
     bm25_positions = [
         bm25_objs.index(obj) if obj in bm25_objs else -1 for obj in obj_to_check
     ]
@@ -162,7 +167,7 @@ def determine_check_num_and_threshold(train_y, train_score):
     position_diff_list = []
     score_diff_list = []
     score_diff = None
-    score_diff_max = 0.05
+    score_diff_max = 0.1
     min_pos_score = 1
     for i, (score, y) in enumerate(zip(sorted_score, sorted_y)):
         if y == 1:
@@ -181,12 +186,13 @@ def determine_check_num_and_threshold(train_y, train_score):
         score_diff = 0
     check_num = np.max(position_diff_list) * 2
     # threshold = min_pos_score - 1.96 * np.std(score_diff_list)
+    print(f"score_diff_max: {score_diff_max:.4f}")
     threshold = min_pos_score - 2 * score_diff_max
-    return check_num, threshold
+    return threshold
 
 
 def rerank_retrieved_objs(
-    query: Query, retrieved_info: RetrievedInfo, args, corpus: list
+    query: Query, retrieved_info: RetrievedInfo, args, check_num: int
 ):
     bm25_objs = retrieved_info.bm25_objs
     hnsw_objs = retrieved_info.hnsw_objs
@@ -210,13 +216,16 @@ def rerank_retrieved_objs(
     }
 
     pos_num = sum(list(query.obj_scores.values()))
-    if query.org_query in query.obj_scores:
-        pos_num -= 1
-    if pos_num < 2:
+    if pos_num == 0:
         obj_to_check = get_next_objs(
-            bm25_objs, bm25_agg_pos_scores, hnsw_objs, hnsw_agg_pos_scores, query
+            bm25_objs,
+            bm25_agg_pos_scores,
+            hnsw_objs,
+            hnsw_agg_pos_scores,
+            query,
+            check_num,
         )
-        return obj_to_check, False
+        return obj_to_check
 
     train_X, train_y, test_X, candidate_objs, train_objs = prepare_data(
         query, bm25_objs, hnsw_objs, bm25_obj_score_dict, hnsw_obj_score_dict
@@ -229,15 +238,14 @@ def rerank_retrieved_objs(
         test_obj_to_feature[obj] = list(np.round(feature, 4))
 
     # search the best score function
-    best_w1, best_w2, train_score = search_best_params(train_X, train_y)
-    print(f"best_w1: {best_w1:.2f}, best_w2: {best_w2:.2f}")
-    obj_score_to_save = {}
+    if pos_num > 0:
+        best_w1, best_w2, train_score = search_best_params(train_X, train_y)
+        print(f"best_w1: {best_w1:.2f}, best_w2: {best_w2:.2f}")
+    else:
+        best_w1, best_w2, train_score = 0, 0, np.maximum(train_X[:, 0], train_X[:, 1])
+    train_obj_score = {}
     for obj, score in zip(train_objs, train_score):
-        obj_score_to_save[obj] = score
-
-    # determine target number of objs to check
-    check_num, threshold = determine_check_num_and_threshold(train_y, train_score)
-    print(f"check_num: {check_num}, score_threshold: {threshold:.4f}")
+        train_obj_score[obj] = score
 
     test_score = (
         best_w1 * test_X[:, 0]
@@ -247,16 +255,23 @@ def rerank_retrieved_objs(
     obj_score = {}
     for obj, score in zip(candidate_objs, test_score):
         obj_score[obj] = score
-        obj_score_to_save[obj] = score
     sorted_obj_score = sorted(obj_score.items(), key=lambda x: x[1], reverse=True)
+    # determine target number of objs to check
+    if args.early_stop:
+        threshold = determine_check_num_and_threshold(train_y, train_score)
+        print(f"score_threshold: {threshold:.4f}")
+    else:
+        threshold = -1
     # # save the obj_score to a json file
     # with open(f"debug/chemical/{query.org_query}.json", "w") as f:
     #     json.dump(obj_score_to_save, f, indent=4)
     obj_to_check = []
     for i, (obj, score) in enumerate(sorted_obj_score):
-        if (i < MIN_CHECK_NUM or score > threshold) and i < min(
-            MAX_CHECK_NUM, args.budget - len(query.obj_scores)
-        ):
+        if (
+            args.early_stop
+            and score > threshold
+            and i < min(args.budget - len(query.obj_scores), MAX_CHECK_NUM)
+        ) or (not args.early_stop and i < check_num):
             obj_to_check.append(obj)
         else:
             break
@@ -264,4 +279,4 @@ def rerank_retrieved_objs(
         print(
             f"obj: {obj}, score: {obj_score[obj]:.2f}, feature: {test_obj_to_feature[obj]}"
         )
-    return obj_to_check, len(obj_to_check) == MAX_CHECK_NUM
+    return obj_to_check
