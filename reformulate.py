@@ -38,7 +38,9 @@ from llm_check import run_inference
 #     return gen()
 
 
-def get_reformulate_prompt(cond: str, col: str, value: list, history: list = []):
+def get_reformulate_prompt(
+    cond: str, col: str, value: list, history: list = [], reform_type: str = "zero-shot"
+):
     system_prompt = "You are an expert database assistant specializing in query expansion and semantic matching."
     user_prompt = f"""Your task is to generate semantically related search terms based on:
 1. A user's query input (which may contain synonyms, abbreviations, partial matches, or hierarchical concepts)
@@ -52,7 +54,26 @@ Instructions:
 3. Generate 2-10 expanded and diversified search terms
 4. Exclude exact duplicates of the original query term and historical generated values if any
 5. Prioritize terms that would actually appear in database records
+"""
+    if reform_type == "few-shot":
+        user_prompt += f"""
+Examples:
+Input:
+Original Query Term: coffee
+Column: drink
+Sample Values: ["cappuccino", "black tea", "water", "orange juice", "soda"]
+Output: cappuccino | espresso | mocha | latte | americano | drip coffee | affogato
 
+Input:
+Original Query Term: Cantonese dim sum
+Column: food
+Sample Values: ["spaghetti carbonara", "chicken tikka masala", "beef bourguignon", "miso glazed salmon", "vegetable paella"]
+Output: ["shrimp dumpling", "barbecue pork bun", "rice noodle roll", "chicken feet", "turnip cake", "taro dumpling", "egg tart"]
+
+Now you are given the following input:
+"""
+
+    user_prompt += f"""
 Input:
 Original Query Term: {cond}
 Column: {col}
@@ -62,11 +83,19 @@ Sample Values: {value}
     if len(history) > 0:
         history_str = " | ".join([f"{h}" for h in history])
         user_prompt += f"Previously Generated Values:\n{history_str}\n"
-    user_prompt += "Output: please directly output the generated search terms separated by ' | ' without any other text. If no more terms can be generated, respond with 'None'."
+    if reform_type == "cot":
+        user_prompt += f"""Your output should follow this format:
+<think>Your thinking process for generating the search terms</think>
+<output>The generated search terms separated by ' | '</output>
+"""
+    else:
+        user_prompt += "Output: please directly output the generated search terms separated by ' | ' without any other text. If no more terms can be generated, respond with 'None'."
     return system_prompt, user_prompt
 
 
-def reformulate(cond: str, col: str, value: list, history: list = []) -> str:
+def reformulate(
+    cond: str, col: str, value: list, history: list = [], reform_type: str = "zero-shot"
+) -> str:
     """
     Reformulate the condition based on the column and value.
 
@@ -83,11 +112,15 @@ def reformulate(cond: str, col: str, value: list, history: list = []) -> str:
     # if len(sample_vals) > 5:
     #     sample_vals = np.random.choice(sample_vals, 5, replace=False)
     print(f"Query Condition: {cond}")
-    system_prompt, user_prompt = get_reformulate_prompt(cond, col, sample_vals, history)
+    system_prompt, user_prompt = get_reformulate_prompt(
+        cond, col, sample_vals, history, reform_type
+    )
     # ans = gen_reformulate(cond, col, sample_vals, history=history)
     ans = run_inference([user_prompt], system_prompts=[system_prompt])
     ans = ans[0]
     print(f"LLM Reformulate: {ans}")
+    if reform_type == "cot":
+        ans = ans.split("<output>")[1].split("</output>")[0].strip()
     values = str(ans).split("|")
     if "None" in values:
         return []

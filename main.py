@@ -28,6 +28,12 @@ def parse_args():
     parser.add_argument("--budget", type=int, default=100)
     parser.add_argument("--tau", type=float, default=0.2)
     parser.add_argument(
+        "--reform_type",
+        type=str,
+        default="zero-shot",
+        choices=["zero-shot", "few-shot", "cot"],
+    )
+    parser.add_argument(
         "--rerank", type=str, default="search", choices=["max", "equal", "search"]
     )
     parser.add_argument(
@@ -37,6 +43,12 @@ def parse_args():
         default="weighted",
     )
     parser.add_argument("--exp_name", type=str, default="debug")
+    parser.add_argument(
+        "--select_query",
+        type=str,
+        default="reliable",
+        choices=["none", "diversified", "reliable", "both"],
+    )
     return parser.parse_args()
 
 
@@ -81,6 +93,7 @@ def solve_query(
         attribute,
         sample_values,
         query.queries_from_generated,
+        args.reform_type,
     )
     cur_generated_query_list = [
         q for q in cur_generated_query_list if q != query.org_query
@@ -107,8 +120,10 @@ def solve_query(
             query_scores_new = score_query(query.query_condition, new_query_objs)
             query.update_query_scores(query_scores_new)
         if step == 1 or last_pos_num > 0:
-            query_list = query.select_diversified_query_words(hnsw_index.emb_model)
-            bm25_queries = query.select_bm25_query_words()
+            query_list = query.select_diversified_query_words(
+                hnsw_index.emb_model, args.select_query
+            )
+            bm25_queries = query.select_bm25_query_words(args.select_query)
             print(
                 f"Step {step} Diversified query list ({len(query_list)}): {query_list}"
             )

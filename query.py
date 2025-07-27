@@ -38,11 +38,16 @@ class Query:
         self.obj_features = {}  # store the features of the checked objects
         self.pred_pos_objs = []
 
-    def select_bm25_query_words(self):
+    def select_bm25_query_words(self, select_query):
+        if select_query == "none":
+            return list(self.query_scores.keys())
         query_list = []
         query_words_list = []
         # keep the query words with score > 1
-        if np.sum(np.array(list(self.query_scores.values())) > 0) == 1:
+        if (
+            np.sum(np.array(list(self.query_scores.values())) > 0) == 1
+            or select_query == "diversified"
+        ):
             thr = 0
         else:
             thr = 2
@@ -50,10 +55,11 @@ class Query:
             if s >= thr:
                 words = q.split()
                 flag = True
-                for selected_q_word in query_words_list:
-                    if len(set(selected_q_word) - set(words)) == 0:
-                        flag = False
-                        break
+                if select_query == "diversified":
+                    for selected_q_word in query_words_list:
+                        if len(set(selected_q_word) - set(words)) == 0:
+                            flag = False
+                            break
                 if flag:
                     query_list.append(q)
                     query_words_list.append(words)
@@ -91,16 +97,23 @@ class Query:
         self.bm25_query_list = new_query_list
         return new_query_list
 
-    def select_diversified_query_words(self, emb_model):
+    def select_diversified_query_words(self, emb_model, select_query):
+        if select_query == "none":
+            return list(self.query_scores.keys())
         query_list = []
         # keep the query words with score > 1
-        if np.sum(np.array(list(self.query_scores.values())) > 0) == 1:
+        if (
+            np.sum(np.array(list(self.query_scores.values())) > 0) == 1
+            or select_query == "diversified"
+        ):
             thr = 0
         else:
             thr = 2
         for q, s in self.query_scores.items():
             if s >= thr:
                 query_list.append(q)
+        if select_query == "reliable":
+            return query_list
         selected_query_list = []
         selected_qids = []
         for i, q in enumerate(query_list):
