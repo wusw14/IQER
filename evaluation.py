@@ -127,3 +127,4 @@ if __name__ == "__main__":
     print(f"Average_retrieve_recall: {np.mean(retrieve_recall_list) * 100:.2f}")
     print(f"Average_ndcg: {avg_ndcg:.2f}")
     print(f"Average_time: {np.median(time_list):.2f}")
+    print(f"{np.mean(retrieve_recall_list) * 100:.2f} {np.mean(k_list):.2f}")

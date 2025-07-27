@@ -22,12 +22,14 @@ def parse_args():
     parser.add_argument("--k", type=int, default=100)
     parser.add_argument("--top_k", type=int, default=10)
     parser.add_argument("--steps", type=int, default=5)
-    parser.add_argument("--alpha", type=float, default=0.5)
+    parser.add_argument("--alpha", type=float, default=1)
     parser.add_argument("--early_stop", action="store_true")
     parser.add_argument("--rethink", action="store_true")
     parser.add_argument("--budget", type=int, default=100)
-    parser.add_argument("--tau", type=float, default=0.01)
-    parser.add_argument("--epsilon", type=float, default=0.1)
+    parser.add_argument("--tau", type=float, default=0.2)
+    parser.add_argument(
+        "--rerank", type=str, default="search", choices=["max", "equal", "search"]
+    )
     parser.add_argument(
         "--index_combine_method",
         type=str,

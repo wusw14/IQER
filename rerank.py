@@ -14,6 +14,7 @@ def get_next_objs(
     hnsw_agg_pos_scores,
     query: Query,
     check_num: int,
+    rerank: str,
 ):
     # sort the retrieved objs by the maximum of bm25 and hnsw scores
     obj_to_check_scores = defaultdict(int)
@@ -26,7 +27,12 @@ def get_next_objs(
     for obj in set(bm25_objs) | set(hnsw_objs):
         score1 = bm25_obj_score_dict.get(obj, 0)
         score2 = hnsw_obj_score_dict.get(obj, 0)
-        obj_to_check_scores[obj] = max(score1, score2)  #  + (score1 + score2) / 2
+        if rerank == "max":
+            obj_to_check_scores[obj] = max(score1, score2)
+        elif rerank == "equal":
+            obj_to_check_scores[obj] = (score1 + score2) / 2
+        elif rerank == "search":
+            obj_to_check_scores[obj] = (score1 + score2) / 2
     for obj, score in query.obj_scores.items():
         try:
             obj_to_check_scores[obj] = -1
@@ -58,6 +64,7 @@ def prepare_data(
 ):
     pos_samples, neg_samples = [], []
     pos_objs, neg_objs = [], []
+    pos_y, neg_y = [], []
     max_bm25_score = 0
     for i, (obj, score) in enumerate(query.obj_scores.items()):
         feature = query.obj_features[obj]
@@ -67,19 +74,20 @@ def prepare_data(
         feature = deepcopy(query.obj_features[obj])
         # feature[0] = feature[0] / max_bm25_score
         # feature.append(max(feature[0], feature[1]))
+        score = (score + query.query_scores.get(obj, 0)) / 2
         if score > 0:
             pos_samples.append(feature)
             pos_objs.append(obj)
+            pos_y.append(score)
         else:
             neg_samples.append(feature)
             neg_objs.append(obj)
+            neg_y.append(score)
     print(f"pos_objs: {pos_objs}")
     print(f"neg_objs: {neg_objs[:5]}")
     train_X = np.concatenate([pos_samples, neg_samples], axis=0)
     train_objs = pos_objs + neg_objs
-    train_y = np.concatenate(
-        [np.ones(len(pos_samples)), np.zeros(len(neg_samples))], axis=0
-    )
+    train_y = pos_y + neg_y
 
     test_X = []
     candidate_objs = list(
@@ -120,6 +128,12 @@ def search_best_params(X, y):
     # best_ndcg = 0
     best_metric = len(y)
     best_w1, best_w2 = 0, 0
+    idcg = 0
+    sorted_y = sorted(y, reverse=True)
+    for i, y_i in enumerate(sorted_y):
+        if y_i > 0:
+            idcg += y_i / np.log2(i + 2)
+    print(f"idcg: {idcg:.4f}")
     for w1 in np.arange(0, 1, 0.1):
         for w2 in np.arange(0, 1, 0.1):
             if w1 + w2 > 1:
@@ -130,12 +144,11 @@ def search_best_params(X, y):
             # calculate ndcg
             dcg = 0
             for i, y_i in enumerate(sorted_y):
-                if y_i == 1:
-                    dcg += 1 / np.log2(i + 2)
+                if y_i > 0:
+                    dcg += y_i / np.log2(i + 2)
                     k = i + 1
-            idcg = sum([1 / np.log2(i + 2) for i in range(int(sum(y)))])
             ndcg = dcg / idcg
-            metric_value = k - ndcg
+            metric_value = -ndcg
             if metric_value < best_metric or (
                 metric_value == best_metric
                 and w1 + w2 < best_w1 + best_w2
@@ -157,7 +170,7 @@ def search_best_params(X, y):
     return best_w1, best_w2, best_score
 
 
-def determine_check_num_and_threshold(train_y, train_score):
+def determine_check_num_and_threshold(train_y, train_score, tau, alpha):
     # check number
     sorted_score, sorted_y = zip(
         *sorted(zip(train_score, train_y), key=lambda x: x[0], reverse=True)
@@ -167,10 +180,10 @@ def determine_check_num_and_threshold(train_y, train_score):
     position_diff_list = []
     score_diff_list = []
     score_diff = None
-    score_diff_max = 0.1
+    score_diff_max = tau
     min_pos_score = 1
     for i, (score, y) in enumerate(zip(sorted_score, sorted_y)):
-        if y == 1:
+        if y > 0:
             position_diff_list.append(i - last_pos_position)
             last_pos_position = i
             if last_pos_score - score > 0:
@@ -184,10 +197,9 @@ def determine_check_num_and_threshold(train_y, train_score):
             min_pos_score = min(min_pos_score, score)
     if score_diff is None:
         score_diff = 0
-    check_num = np.max(position_diff_list) * 2
     # threshold = min_pos_score - 1.96 * np.std(score_diff_list)
     print(f"score_diff_max: {score_diff_max:.4f}")
-    threshold = min_pos_score - 2 * score_diff_max
+    threshold = min_pos_score - alpha * score_diff_max
     return threshold
 
 
@@ -224,6 +236,7 @@ def rerank_retrieved_objs(
             hnsw_agg_pos_scores,
             query,
             check_num,
+            args.rerank,
         )
         return obj_to_check
 
@@ -238,9 +251,11 @@ def rerank_retrieved_objs(
         test_obj_to_feature[obj] = list(np.round(feature, 4))
 
     # search the best score function
-    if pos_num > 0:
+    if pos_num > 0 and args.rerank == "search":
         best_w1, best_w2, train_score = search_best_params(train_X, train_y)
         print(f"best_w1: {best_w1:.2f}, best_w2: {best_w2:.2f}")
+    elif args.rerank == "equal":
+        best_w1, best_w2, train_score = 0.5, 0.5, (train_X[:, 0] + train_X[:, 1]) / 2
     else:
         best_w1, best_w2, train_score = 0, 0, np.maximum(train_X[:, 0], train_X[:, 1])
     train_obj_score = {}
@@ -258,7 +273,9 @@ def rerank_retrieved_objs(
     sorted_obj_score = sorted(obj_score.items(), key=lambda x: x[1], reverse=True)
     # determine target number of objs to check
     if args.early_stop:
-        threshold = determine_check_num_and_threshold(train_y, train_score)
+        threshold = determine_check_num_and_threshold(
+            train_y, train_score, args.tau, args.alpha
+        )
         print(f"score_threshold: {threshold:.4f}")
     else:
         threshold = -1
@@ -269,7 +286,7 @@ def rerank_retrieved_objs(
     for i, (obj, score) in enumerate(sorted_obj_score):
         if (
             args.early_stop
-            and score > threshold
+            and (score > threshold or i < 100 - len(query.obj_scores))
             and i < min(args.budget - len(query.obj_scores), MAX_CHECK_NUM)
         ) or (not args.early_stop and i < check_num):
             obj_to_check.append(obj)
